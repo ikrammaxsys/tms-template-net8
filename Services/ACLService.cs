@@ -1,23 +1,37 @@
-using System.IdentityModel.Tokens.Jwt;
-using System.Text.Json;
-using AuthACL.CentralAuth.Models;
-using Microsoft.AspNetCore.Http;
+using System.Net;
+using System.Net.Http.Headers;
 
 namespace tms_template_net8.Services;
 
 public sealed class ACLService : IACLService
 {
-    private readonly IHttpClientFactory _httpClientFactory;
-    private readonly IConfiguration _configuration;
-    private readonly ILogger<ACLService> _logger;
+    private const string VaspClientName = "Vasp";
 
-    public ACLService(
-        IHttpClientFactory httpClientFactory,
-        IConfiguration configuration,
-        ILogger<ACLService> logger)
+    private readonly IHttpClientFactory _httpClientFactory;
+
+    public ACLService(IHttpClientFactory httpClientFactory)
     {
         _httpClientFactory = httpClientFactory;
-        _configuration = configuration;
-        _logger = logger;
+    }
+
+    public async Task<string?> GetUserByIdAsync(string id, string? bearerToken = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+
+        var client = _httpClientFactory.CreateClient(VaspClientName);
+        var path = $"api/users/{Uri.EscapeDataString(id)}";
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, path);
+        request.Headers.Accept.ParseAdd("application/json");
+        if (!string.IsNullOrWhiteSpace(bearerToken))
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken.Trim());
+
+        using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
     }
 }

@@ -7,6 +7,8 @@ using AuthACL.CentralAuth.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using WebModels = tms_template_net8.Models;
+using tms_template_net8.Services;
 
 namespace tms_template_net8.Controllers.Web;
 
@@ -18,22 +20,38 @@ public class ACLCheckingController : Controller
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
     private readonly ILogger<ACLCheckingController> _logger;
+    private readonly IACLService _aclService;
 
     public ACLCheckingController(
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration,
-        ILogger<ACLCheckingController> logger)
+        ILogger<ACLCheckingController> logger,
+        IACLService aclService)
     {
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
         _logger = logger;
+        _aclService = aclService;
     }
 
+    /// <summary>
+    /// Entry URL from the external login app (canonical path), e.g.
+    /// <c>https://host/ACLChecking/?ID_ACL_USER=7171&amp;auth-code=...</c>
+    /// Requests to <c>/</c> with the same query are redirected here from <c>Program.cs</c>.
+    /// <list type="number">
+    /// <item><c>auth-code</c> is exchanged for JWT cookies, then stripped from the URL (other query params are kept).</item>
+    /// <item>The view POSTs the access token to <see cref="Verify"/> for server-side validation and session.</item>
+    /// </list>
+    /// </summary>
     [HttpGet]
     public async Task<IActionResult> Index()
     {
         var tokenKey = _configuration["Auth:AccessTokenStorageKey"] ?? "authacl_access_token";
         var refreshKey = _configuration["Auth:RefreshTokenStorageKey"] ?? "authacl_refresh_token";
+
+        var idAclUser = Request.Query["ID_ACL_USER"].ToString().Trim();
+        if (!string.IsNullOrEmpty(idAclUser))
+            HttpContext.Session.SetString("ID_ACL_USER", idAclUser);
 
         var authCode = Request.Query["auth-code"].ToString().Trim();
         if (!string.IsNullOrEmpty(authCode))
@@ -90,12 +108,15 @@ public class ACLCheckingController : Controller
 
         ViewBag.Token = token;
         ViewBag.TokenKey = tokenKey;
+        ViewBag.IdAclUser = Request.Query["ID_ACL_USER"].ToString().Trim();
         return View();
     }
 
     [HttpPost("verify")]
-    public async Task<IActionResult> Verify([FromBody] AclTokenRequest? body)
+    public async Task<IActionResult> Verify([FromBody] WebModels.AclTokenRequest? body)
     {
+        await HttpContext.Session.LoadAsync(HttpContext.RequestAborted);
+
         var token = body?.Token?.Trim() ?? "";
 
         var verifyUrl = _configuration["Auth:BaseUrl"]?.Trim() + _configuration["Auth:VerifyTokenUrl"]?.Trim();
@@ -118,6 +139,7 @@ public class ACLCheckingController : Controller
         }
 
         string? userIdFromToken = null;
+        string? idAclUserFromJwt = null;
         DateTime? expiresAtUtc = null;
         try
         {
@@ -126,6 +148,7 @@ public class ACLCheckingController : Controller
             userIdFromToken = jwt.Claims.FirstOrDefault(x => x.Type == JwtRegisteredClaimNames.Sub)?.Value
                 ?? jwt.Claims.FirstOrDefault(x => x.Type == "nameid")?.Value
                 ?? jwt.Claims.FirstOrDefault(x => x.Type == "unique_name")?.Value;
+            idAclUserFromJwt = FirstMatchingJwtClaim(jwt, "ID_ACL_USER", "id_acl_user", "acl_user_id", "AclUserId");
             expiresAtUtc = jwt.ValidTo;
         }
         catch
@@ -133,21 +156,50 @@ public class ACLCheckingController : Controller
             // Token has already been verified externally; continue with minimal fallback values.
         }
 
-        var userInfo = await RetrieveUserDetail(token, userIdFromToken);
+        // Prefer explicit ID from POST (survives missing/stale session cookie); then session; then JWT claims; then sub.
+        var idAclFromBody = body?.IdAclUser?.Trim();
+        if (!string.IsNullOrEmpty(idAclFromBody))
+            HttpContext.Session.SetString("ID_ACL_USER", idAclFromBody);
+
+        var sessionAclUser = HttpContext.Session.GetString("ID_ACL_USER")?.Trim();
+        var lookupUserId = !string.IsNullOrEmpty(idAclFromBody)
+            ? idAclFromBody
+            : !string.IsNullOrEmpty(sessionAclUser)
+                ? sessionAclUser
+                : !string.IsNullOrEmpty(idAclUserFromJwt)
+                    ? idAclUserFromJwt
+                    : userIdFromToken;
+
+        var userInfo = await RetrieveUserDetail(lookupUserId, token);
         var sessionUserId = userInfo.UserId ?? userIdFromToken ?? string.Empty;
 
         HttpContext.Session.SetString(AclSessionKey, "1");
         HttpContext.Session.SetString("gstrUserID", sessionUserId);
+        if (!string.IsNullOrEmpty(userInfo.Username))
+            HttpContext.Session.SetString("gstrUserName", userInfo.Username);
 
         _logger.LogInformation("ACL verify succeeded; session established for user id length {UserIdLength}.", sessionUserId.Length);
+
+        // Must be /Home/Index — Url.Action("Index","Home") collapses to "/" which this app's middleware redirects to /ACLChecking.
+        var homeUrl = BuildHomeIndexPath(HttpContext);
 
         return Ok(new
         {
             success = true,
-            redirectUrl = Url.Action("Index", "Home"),
+            redirectUrl = homeUrl,
             userId = sessionUserId,
+            userName = userInfo.Username,
             expiresAtUtc = expiresAtUtc?.ToUniversalTime().ToString("o")
         });
+    }
+
+    /// <summary>Explicit path so the client never navigates to "/", which is rewritten to the ACL gate.</summary>
+    internal static string BuildHomeIndexPath(HttpContext httpContext)
+    {
+        var basePath = httpContext.Request.PathBase.HasValue
+            ? httpContext.Request.PathBase.ToString().TrimEnd('/')
+            : "";
+        return string.IsNullOrEmpty(basePath) ? "/Home/Index" : basePath + "/Home/Index";
     }
 
     /// <summary>
@@ -347,65 +399,87 @@ public class ACLCheckingController : Controller
     }
 
     /// <summary>
-    /// TODO: Replace with subsystem-specific user lookup logic.
-    /// This method should query your local database, call your user service API, or use any other
-    /// subsystem-specific mechanism to retrieve user details based on the userId from the JWT token.
-    /// 
-    /// Example implementations:
-    /// - Query local database: var user = await _userRepository.GetByIdAsync(userId);
-    /// - Call user service API: var user = await _userService.GetUserByIdAsync(userId);
-    /// - Use Auth:UserInfoUrl endpoint (see commented code below)
+    /// Loads display name (and id when present) from the Vasp ACL user API via <see cref="IACLService"/>.
     /// </summary>
-    private async Task<UserDetail> RetrieveUserDetail(string token, string? userId)
+    private async Task<WebModels.UserDetail> RetrieveUserDetail(string? lookupUserId, string? bearerToken)
     {
-        // Default implementation - returns minimal user detail
-        // Replace this with your subsystem-specific user lookup logic
-        return new UserDetail 
-        { 
-            UserId = userId, 
-            Username = userId 
-        };
+        if (string.IsNullOrWhiteSpace(lookupUserId))
+            return new WebModels.UserDetail { UserId = lookupUserId, Username = lookupUserId };
 
-        /* Example: Using Auth:UserInfoUrl endpoint
-        var userInfoUrlTemplate = _configuration["Auth:UserInfoUrl"]?.Trim();
-        if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(userInfoUrlTemplate))
-            return new UserDetail { UserId = userId, Username = userId };
-
-        var url = userInfoUrlTemplate.Replace("{userId}", Uri.EscapeDataString(userId), StringComparison.OrdinalIgnoreCase);
         try
         {
-            var client = _httpClientFactory.CreateClient();
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            request.Headers.Accept.ParseAdd("application/json");
-
-            using var response = await client.SendAsync(request);
-            if (!response.IsSuccessStatusCode)
-                return new UserDetail { UserId = userId, Username = userId };
-
-            var payload = await response.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(payload);
-            var root = doc.RootElement;
-            
-            var target = root;
-            if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("data", out var dataNode))
-                target = dataNode;
-
-            var userIdValue = JsonStringOrNumber(target, "userId", "UserId");
-            var usernameValue = JsonStringOrNumber(target, "username", "Username");
-
-            return new UserDetail
+            var payload = await _aclService.GetUserByIdAsync(lookupUserId, bearerToken, HttpContext.RequestAborted).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(payload))
             {
-                UserId = userIdValue ?? userId,
-                Username = usernameValue ?? userId
+                _logger.LogInformation("ACL user lookup returned no body for id; using id as display fallback.");
+                return new WebModels.UserDetail { UserId = lookupUserId, Username = lookupUserId };
+            }
+
+            var displayName = TryParseDisplayNameFromAclUserPayload(payload);
+            var idFromPayload = TryParseUserIdFromAclUserPayload(payload);
+
+            return new WebModels.UserDetail
+            {
+                UserId = idFromPayload ?? lookupUserId,
+                Username = displayName ?? lookupUserId
             };
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "User info request failed; using fallback.");
-            return new UserDetail { UserId = userId, Username = userId };
+            _logger.LogWarning(ex, "ACL user lookup failed for id; using id as display fallback.");
+            return new WebModels.UserDetail { UserId = lookupUserId, Username = lookupUserId };
         }
-        */
+    }
+
+    private static string? TryParseDisplayNameFromAclUserPayload(string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            if (root.ValueKind == JsonValueKind.String)
+                return root.GetString();
+
+            if (root.ValueKind != JsonValueKind.Object)
+                return null;
+
+            var target = root;
+            if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
+                target = data;
+
+            return JsonStringOrNumber(target,
+                "userName", "UserName", "username", "Username",
+                "fullName", "FullName", "full_name",
+                "displayName", "DisplayName", "display_name",
+                "name", "Name",
+                "user_name", "User_Name");
+        }
+        catch
+        {
+            var t = payload.Trim();
+            return string.IsNullOrEmpty(t) ? null : t;
+        }
+    }
+
+    private static string? TryParseUserIdFromAclUserPayload(string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                return null;
+
+            var target = root;
+            if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
+                target = data;
+
+            return JsonStringOrNumber(target, "id", "Id", "userId", "UserId");
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private async Task<bool> LogoutAsync(string token)
@@ -443,6 +517,20 @@ public class ACLCheckingController : Controller
             _logger.LogError(ex, "Exception occurred during logout request.");
             return false;
         }
+    }
+
+    private static string? FirstMatchingJwtClaim(JwtSecurityToken jwt, params string[] claimTypes)
+    {
+        var wanted = new HashSet<string>(claimTypes, StringComparer.OrdinalIgnoreCase);
+        foreach (var c in jwt.Claims)
+        {
+            if (!wanted.Contains(c.Type))
+                continue;
+            var v = c.Value?.Trim();
+            return string.IsNullOrEmpty(v) ? null : v;
+        }
+
+        return null;
     }
 
     private static string? JsonStringOrNumber(JsonElement target, params string[] propertyNames)

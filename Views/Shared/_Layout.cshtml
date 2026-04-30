@@ -5,11 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>@ViewData["Title"] - tms_template_net8</title>
     <script type="importmap"></script>
-    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.css" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/tms_template_net8.styles.css" asp-append-version="true" />
 </head>
 <body>
+    @{
+        var gstrUserName = Context.Session.GetString("gstrUserName");
+    }
     <header>
         <nav class="navbar navbar-expand-sm navbar-toggleable-sm navbar-light bg-white border-bottom box-shadow mb-3">
             <div class="container-fluid">
@@ -27,6 +30,10 @@
                             <a class="nav-link text-dark" asp-area="" asp-controller="Home" asp-action="Privacy">Privacy</a>
                         </li>
                     </ul>
+                    @if (!string.IsNullOrEmpty(gstrUserName))
+                    {
+                        <span class="navbar-text ms-sm-auto">@gstrUserName</span>
+                    }
                 </div>
             </div>
         </nav>

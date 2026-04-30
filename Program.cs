@@ -9,8 +9,14 @@ builder.Services.AddControllersWithViews();
 
 builder.Services.AddAuthServices(builder.Configuration, builder.Environment);
 builder.Services.AddHttpClient();
+builder.Services.AddHttpClient("Vasp", (sp, client) =>
+{
+    var baseUrl = sp.GetRequiredService<IConfiguration>()["Vasp:BaseUrl"];
+    if (string.IsNullOrWhiteSpace(baseUrl))
+        throw new InvalidOperationException("Configuration 'Vasp:BaseUrl' is required.");
+    client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
+});
 builder.Services.AddScoped<IAuthTokenRefreshService, AuthTokenRefreshService>();
-builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IACLService, ACLService>();
 builder.Services.AddSession();
 
@@ -24,12 +30,27 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseSession();
+
+// Canonical ACL entry is /ACLChecking/?... (not /). Redirect bare / so wrong redirect URIs still work.
+app.Use((ctx, next) =>
+{
+    if (ctx.Request.Path != "/")
+        return next();
+    var basePath = ctx.Request.PathBase.HasValue ? ctx.Request.PathBase.ToString().TrimEnd('/') : "";
+    ctx.Response.Redirect($"{basePath}/ACLChecking{ctx.Request.QueryString}");
+    return Task.CompletedTask;
+});
+
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseAccessTokenValidation();
 
 app.UseHttpsRedirection();
+app.UseStaticFiles();
 app.UseRouting();
 
+app.MapControllerRoute(
+    name: "default",
+    pattern: "{controller=Home}/{action=Index}/{id?}");
 app.MapControllers();
 app.Run();

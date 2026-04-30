@@ -82,8 +82,11 @@ public sealed class AccessTokenValidationMiddleware
 
     private static bool ShouldSkipTokenCheck(PathString path)
     {
+        // Root is the verify entry when default route is ACLChecking; external apps redirect here without a cookie yet.
+        if (!path.HasValue || path == "/")
+            return true;
+
         return path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWithSegments("/", StringComparison.OrdinalIgnoreCase)
             || path.StartsWithSegments("/ACLChecking", StringComparison.OrdinalIgnoreCase)
             || path.StartsWithSegments("/Home/SessionExpired", StringComparison.OrdinalIgnoreCase)
             || path.StartsWithSegments("/Login", StringComparison.OrdinalIgnoreCase);
