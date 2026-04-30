@@ -7,4 +7,8 @@
     <RootNamespace>tms_template_net8</RootNamespace>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="AuthACL.CentralAuth" Version="0.1.1" />
+  </ItemGroup>
+
 </Project>

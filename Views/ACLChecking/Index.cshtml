@@ -1,0 +1,98 @@
+@{
+    ViewData["Title"] = "Checking access";
+    Layout = null;
+}
+@using System.Text.Json
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@ViewData["Title"]</title>
+    <link rel="stylesheet" href="@Url.Content("~/Content/bootstrap.min.css")" />
+    <script src="@Url.Content("~/Scripts/vendor/jquery-3.5.1.min.js")"></script>
+    <script src="@Url.Content("~/Scripts/bootstrap.bundle.min.js")"></script>
+    <script src="@Url.Content("~/Scripts/vendor/jquery.cookie.min.js")"></script>
+</head>
+<body>
+    <div id="acl-checking-root" class="d-flex flex-column align-items-center justify-content-center min-vh-100 bg-light px-3">
+        @if (ViewBag.Error != null)
+        {
+            <div class="text-center">
+                <div class="alert alert-danger" role="alert">
+                    @ViewBag.Error
+                </div>
+                <p class="text-muted">Please check your authentication and try again.</p>
+            </div>
+        }
+        else
+        {
+            <div class="text-center">
+                <div class="spinner-border text-primary mb-3" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="text-muted">Validating token...</p>
+            </div>
+        }
+    </div>
+</body>
+
+<script>
+    $(document).ready(function () {
+        var tokenKey = @Html.Raw(JsonSerializer.Serialize(ViewBag.TokenKey ?? "authacl_access_token"));
+        var tokenFromQuery = @Html.Raw(JsonSerializer.Serialize((string)(ViewBag.Token ?? "")));
+        var token = (tokenFromQuery && String(tokenFromQuery).trim()) || $.cookie(tokenKey) || "";
+        var verifyUrl = '@Url.Action("Verify", "ACLChecking")';
+        fetch(verifyUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify({ token: token })
+        }).then(response => response.json())
+          .then(data => {
+
+            console.log("data", data);
+              if (data.success) {
+                  var homeUrl = data.redirectUrl || '@Url.Action("Index", "Home")';
+                  $('#acl-checking-root').html(`
+                      <div class="text-center">
+                        <div class="mb-3">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" fill="#198754" class="bi bi-check-circle-fill" viewBox="0 0 16 16">
+                              <path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0zm-3.97-3.03a.75.75 0 0 0-1.08.02L7.477 8.417l-1.384-1.39a.75.75 0 0 0-1.079 1.04l2 2.013a.75.75 0 0 0 1.08-.02l3.5-4a.75.75 0 0 0-.02-1.05z"/>
+                            </svg>
+                        </div>
+                          <div class="alert alert-success" role="alert">
+                              Access granted. Redirecting to the home page…
+                          </div>
+                          <p class="text-muted mb-0">You will be redirected in a moment.</p>
+                      </div>
+                  `);
+                  setTimeout(function () {
+                      window.location.href = homeUrl;
+                  }, 1500);
+              } else {
+                  // Token is invalid, show error message
+                  $('#acl-checking-root').html(`
+                      <div class="text-center">
+                        <div class="mb-3">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" fill="#dc3545" class="bi bi-x-circle-fill" viewBox="0 0 16 16">
+                              <path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0zm-4.146-3.146a.5.5 0 0 0-.708-.708L8 7.293 4.854 4.146a.5.5 0 1 0-.708.708L7.293 8l-3.147 3.146a.5.5 0 0 0 .708.708L8 8.707l3.146 3.147a.5.5 0 0 0 .708-.708L8.707 8l3.147-3.146z"/>
+                            </svg>
+                        </div>
+                          <div class="alert alert-danger" role="alert">
+                              ${data.message || 'Token validation failed.'}
+                          </div>
+                          <p class="text-muted">Please check your authentication and try again.</p>
+                      </div>
+                  `);
+                   setTimeout(function () {
+                      var ru = data.redirectUrl || (data.data && data.data.redirectUrl);
+                      if (ru) window.location.href = ru;
+                  }, 1500);
+              }
+          });
+    });
+</script>
+</html>

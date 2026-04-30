@@ -1,0 +1,107 @@
+@inject IConfiguration Configuration
+@{
+    Layout = null;
+    var systemName = Configuration["App:SystemName"] ?? "Your System";
+    var tokenKey = ViewBag.TokenKey as string ?? "authacl_access_token";
+    var vaspBaseUrl = ViewBag.VaspBaseUrl as string ?? "/";
+    var logoutPostUrl = ViewBag.LogoutPostUrl as string ?? "";
+}
+<!DOCTYPE html>
+<html lang="en" class="h-100">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Signing out — @systemName</title>
+    <link rel="stylesheet" href="@Url.Content("~/Content/bootstrap.min.css")" />
+    <link rel="stylesheet" href="@Url.Content("~/Content/Site.css")" />
+    <style>
+        .tr-signout-page {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: #f8f9fa;
+            padding: 2rem 1rem;
+        }
+        .tr-signout-card {
+            text-align: center;
+            max-width: 420px;
+        }
+        .tr-signout-logo {
+            max-width: 280px;
+            width: 100%;
+            height: auto;
+            margin-bottom: 1.75rem;
+        }
+        .tr-signout-title {
+            color: #004098;
+            font-weight: 600;
+            font-size: 1.25rem;
+            margin-bottom: 0.5rem;
+        }
+        .tr-signout-sub {
+            color: #6c757d;
+            font-size: 0.95rem;
+            margin-bottom: 1.5rem;
+        }
+    </style>
+</head>
+<body class="h-100">
+    <div class="tr-signout-page">
+        <div class="tr-signout-card">
+            <!-- TODO: Replace with your subsystem logo -->
+            <img class="tr-signout-logo" src="@Url.Content("~/Images/logo.png")" alt="@systemName" />
+            <h1 class="tr-signout-title">Signing out</h1>
+            <p class="tr-signout-sub mb-0">You are being logged out from all sessions. Please wait…</p>
+            <div class="spinner-border text-primary mt-3" role="status" aria-label="Loading">
+                <span class="visually-hidden">Loading</span>
+            </div>
+        </div>
+    </div>
+    <script>
+        (function () {
+            var tokenKey = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(tokenKey));
+            var vaspBaseUrl = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(vaspBaseUrl));
+            var logoutPostUrl = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(logoutPostUrl));
+
+            function getCookie(name) {
+                var parts = ('; ' + document.cookie).split('; ' + name + '=');
+                if (parts.length === 2) return parts.pop().split(';').shift() || '';
+                return '';
+            }
+
+            function clearAccessTokenCookie() {
+                document.cookie = tokenKey + '=; Path=/; Max-Age=0; SameSite=Lax';
+            }
+
+            function redirectToVasp() {
+                clearAccessTokenCookie();
+                window.location.href = vaspBaseUrl;
+            }
+
+            var token = (getCookie(tokenKey) || '').trim();
+
+            var headers = {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            };
+            if (token) {
+                headers['Authorization'] = 'Bearer ' + token;
+            }
+
+            fetch(logoutPostUrl, {
+                method: 'POST',
+                headers: headers,
+                credentials: 'same-origin'
+            }).then(function (response) {
+                return response.json().then(function (data) {
+                    redirectToVasp();
+                });
+            }).catch(function () {
+                redirectToVasp();
+            });
+        })();
+    </script>
+</body>
+</html>
