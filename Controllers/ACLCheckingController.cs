@@ -175,8 +175,8 @@ public class ACLCheckingController : Controller
 
         HttpContext.Session.SetString(AclSessionKey, "1");
         HttpContext.Session.SetString("gstrUserID", sessionUserId);
-        if (!string.IsNullOrEmpty(userInfo.Username))
-            HttpContext.Session.SetString("gstrUserName", userInfo.Username);
+        if (!string.IsNullOrEmpty(userInfo.EmpName))
+            HttpContext.Session.SetString("gstrUserName", userInfo.EmpName);
 
         _logger.LogInformation("ACL verify succeeded; session established for user id length {UserIdLength}.", sessionUserId.Length);
 
@@ -188,7 +188,8 @@ public class ACLCheckingController : Controller
             success = true,
             redirectUrl = homeUrl,
             userId = sessionUserId,
-            userName = userInfo.Username,
+            empName = userInfo.EmpName,
+            userName = userInfo.EmpName,
             expiresAtUtc = expiresAtUtc?.ToUniversalTime().ToString("o")
         });
     }
@@ -404,7 +405,7 @@ public class ACLCheckingController : Controller
     private async Task<WebModels.UserDetail> RetrieveUserDetail(string? lookupUserId, string? bearerToken)
     {
         if (string.IsNullOrWhiteSpace(lookupUserId))
-            return new WebModels.UserDetail { UserId = lookupUserId, Username = lookupUserId };
+            return new WebModels.UserDetail { UserId = lookupUserId, EmpName = lookupUserId };
 
         try
         {
@@ -412,7 +413,7 @@ public class ACLCheckingController : Controller
             if (string.IsNullOrWhiteSpace(payload))
             {
                 _logger.LogInformation("ACL user lookup returned no body for id; using id as display fallback.");
-                return new WebModels.UserDetail { UserId = lookupUserId, Username = lookupUserId };
+                return new WebModels.UserDetail { UserId = lookupUserId, EmpName = lookupUserId };
             }
 
             var displayName = TryParseDisplayNameFromAclUserPayload(payload);
@@ -421,13 +422,13 @@ public class ACLCheckingController : Controller
             return new WebModels.UserDetail
             {
                 UserId = idFromPayload ?? lookupUserId,
-                Username = displayName ?? lookupUserId
+                EmpName = displayName ?? lookupUserId
             };
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "ACL user lookup failed for id; using id as display fallback.");
-            return new WebModels.UserDetail { UserId = lookupUserId, Username = lookupUserId };
+            return new WebModels.UserDetail { UserId = lookupUserId, EmpName = lookupUserId };
         }
     }
 
@@ -448,6 +449,8 @@ public class ACLCheckingController : Controller
                 target = data;
 
             return JsonStringOrNumber(target,
+                "empName", "EmpName", "EMP_NAME", "emp_name", "Emp_Name",
+                "employeeName", "EmployeeName", "employee_name",
                 "userName", "UserName", "username", "Username",
                 "fullName", "FullName", "full_name",
                 "displayName", "DisplayName", "display_name",
