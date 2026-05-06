@@ -1,0 +1,68 @@
+@{
+    var topBarUserName = Context.Session.GetString("gstrUserName") ?? string.Empty;
+}
+<script>
+(function () {
+    window.appConfig = window.appConfig || {};
+    window.appConfig.topbarUserName = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(topBarUserName));
+    window.appConfig.topbarAvatarUrl = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Url.Content("~/images/avatar.png") ?? string.Empty));
+    window.appConfig.topbarLogoutUrl = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Url.Action("LogoutPage", "ACLChecking") ?? string.Empty));
+    window.appConfig.topbarChangePasswordUrl = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(string.Empty));
+})();
+</script>
+<ui-topbar></ui-topbar>
+<script>
+(function () {
+    var c = window.appConfig || {};
+
+    function applyTopbarIdentity() {
+        var el = document.querySelector("ui-topbar");
+        if (!el) return;
+        el.setAttribute("user-name", c.topbarUserName != null ? c.topbarUserName : "");
+        el.setAttribute("avatar-url", c.topbarAvatarUrl || "");
+    }
+
+    applyTopbarIdentity();
+
+    function cfg() {
+        return {
+            logout: c.topbarLogoutUrl || "",
+            changePassword: c.topbarChangePasswordUrl || c.topbarChangeUserUrl || ""
+        };
+    }
+
+    function go(url) {
+        if (url) window.location.assign(url);
+    }
+
+    document.addEventListener(
+        "click",
+        function (e) {
+            var t = e.target;
+            if (!t || !t.closest) return;
+            var profile = t.closest("user-profile");
+            if (!profile) return;
+            var u = cfg();
+            if (t.closest(".logout-btn")) {
+                e.preventDefault();
+                e.stopPropagation();
+                go(u.logout);
+                return;
+            }
+            if (t.closest(".ChangePassword-btn")) {
+                e.preventDefault();
+                e.stopPropagation();
+                go(u.changePassword);
+            }
+        },
+        true
+    );
+
+    document.addEventListener("ui:topbar:logoutClick", function () {
+        go(cfg().logout);
+    });
+    document.addEventListener("ui:topbar:settingsClick", function () {
+        go(cfg().changePassword);
+    });
+})();
+</script>

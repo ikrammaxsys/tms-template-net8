@@ -1,0 +1,41 @@
+[
+  {
+    "iD_ACL_RESOURCE": 100,
+    "resourcE_PARENT_ID": 0,
+    "resourcE_NAME": "FILM_DMS_LIVE",
+    "resourcE_VIEW": "-",
+    "resourcE_CONTROLLER": "-",
+    "vieW_RIGHT": "TRUE",
+    "adD_RIGHT": "TRUE",
+    "ediT_RIGHT": "TRUE",
+    "deletE_RIGHT": "TRUE",
+    "layer": 0,
+    "action": 0
+  },
+  {
+    "iD_ACL_RESOURCE": 1,
+    "resourcE_PARENT_ID": 100,
+    "resourcE_NAME": "Master Sidebar",
+    "resourcE_VIEW": "-",
+    "resourcE_CONTROLLER": "-",
+    "vieW_RIGHT": "TRUE",
+    "adD_RIGHT": "TRUE",
+    "ediT_RIGHT": "TRUE",
+    "deletE_RIGHT": "TRUE",
+    "layer": 1,
+    "action": 0
+  },
+  {
+    "iD_ACL_RESOURCE": 2,
+    "resourcE_PARENT_ID": 1,
+    "resourcE_NAME": "Dashboard",
+    "resourcE_VIEW": "Dashboard",
+    "resourcE_CONTROLLER": "Home",
+    "vieW_RIGHT": "TRUE",
+    "adD_RIGHT": "TRUE",
+    "ediT_RIGHT": "TRUE",
+    "deletE_RIGHT": "TRUE",
+    "layer": 2,
+    "action": 1
+  }
+]
