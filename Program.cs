@@ -1,8 +1,9 @@
 using AuthACL.CentralAuth.Jwt;
-using AuthACL.CentralAuth.AccessValidation;
 using tms_template_net8.Services;
+using tms_template_net8.AccessValidation;
 
 var builder = WebApplication.CreateBuilder(args);
+await PublicPemSync.SyncAsync(builder.Configuration, builder.Environment);
 
 // Add services to the container.
 builder.Services.AddControllersWithViews();
