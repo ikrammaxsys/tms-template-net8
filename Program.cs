@@ -18,6 +18,7 @@ builder.Services.AddHttpClient("Vasp", (sp, client) =>
 });
 builder.Services.AddScoped<IAuthTokenRefreshService, AuthTokenRefreshService>();
 builder.Services.AddScoped<IACLService, ACLService>();
+builder.Services.AddScoped<ICoreAPIService, CoreAPIService>();
 builder.Services.AddSession();
 
 var app = builder.Build();
@@ -44,7 +45,6 @@ app.Use((ctx, next) =>
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseAccessTokenValidation();
-
 app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseRouting();
