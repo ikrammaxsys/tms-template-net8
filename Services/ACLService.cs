@@ -6,6 +6,7 @@ namespace tms_template_net8.Services;
 public sealed class ACLService : IACLService
 {
     private const string VaspClientName = "Vasp";
+    private const string JsonMediaType = "application/json";
 
     private readonly IHttpClientFactory _httpClientFactory;
 
@@ -18,14 +19,14 @@ public sealed class ACLService : IACLService
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
 
-        var client = _httpClientFactory.CreateClient(VaspClientName);
-        var path = $"api/users/{Uri.EscapeDataString(id)}";
+        var requestPath = $"api/users/{Uri.EscapeDataString(id)}";
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, path);
-        request.Headers.Accept.ParseAdd("application/json");
+        using var request = new HttpRequestMessage(HttpMethod.Get, requestPath);
+        request.Headers.Accept.ParseAdd(JsonMediaType);
         if (!string.IsNullOrWhiteSpace(bearerToken))
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken.Trim());
 
+        using var client = _httpClientFactory.CreateClient(VaspClientName);
         using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
 
         if (response.StatusCode == HttpStatusCode.NotFound)
