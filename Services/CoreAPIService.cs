@@ -6,7 +6,6 @@ public sealed class CoreAPIService : ICoreAPIService
 {
     private const string JsonMediaType = "application/json";
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
-
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly string _coreApiBaseUrl;
 
@@ -27,7 +26,7 @@ public sealed class CoreAPIService : ICoreAPIService
 
         using var request = new HttpRequestMessage(HttpMethod.Get, statusUri);
         request.Headers.Accept.ParseAdd(JsonMediaType);
-
+        
         using var client = _httpClientFactory.CreateClient();
         using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
