@@ -1,0 +1,28 @@
+<div class="sidebar-shell" id="sidebar-shell"
+     data-path-base="@(Context.Request.PathBase.Value?.TrimEnd('/') ?? "")">
+    <ui-sidebar ui-source="@Url.Content("~/data/sidebar-items.json")"></ui-sidebar>
+</div>
+<script>
+    (function () {
+        var shell = document.getElementById('sidebar-shell');
+        if (!shell) return;
+        var pb = (shell.getAttribute('data-path-base') || window.appConfig?.baseUrl || '').replace(/\/$/, '');
+        if (!pb) return;
+        shell.addEventListener('click', function (e) {
+            var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+            if (!a) return;
+            var raw = a.getAttribute('href');
+            if (!raw || raw.startsWith('#') || raw.toLowerCase().startsWith('javascript:')) return;
+            try {
+                var u = new URL(raw, window.location.href);
+                if (u.origin !== window.location.origin) return;
+                var path = u.pathname || '';
+                if (path === pb || path.startsWith(pb + '/')) return;
+                if (path.startsWith('/')) {
+                    e.preventDefault();
+                    window.location.assign(pb + path + u.search + u.hash);
+                }
+            } catch (_) { /* ignore */ }
+        }, true);
+    })();
+</script>

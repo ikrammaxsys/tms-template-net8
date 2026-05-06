@@ -1,0 +1,7 @@
+@if (ViewBag.Title != null || ViewData["Title"] != null)
+{
+    <span id="app-page-title-meta" hidden>@((ViewBag.Title ?? ViewData["Title"])?.ToString())</span>
+}
+@await RenderSectionAsync("Styles", required: false)
+@RenderBody()
+@await RenderSectionAsync("Scripts", required: false)
