@@ -14,7 +14,6 @@ namespace tms_template_net8.Controllers.Web;
 public class ACLCheckingController : Controller
 {
     public const string AclSessionKey = "AclCheckPassed";
-
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
     private readonly IACLService _aclService;
@@ -232,15 +231,10 @@ public class ACLCheckingController : Controller
                 return (false, msg ?? "Auth code exchange was not successful.", null, null);
             }
 
-            string? access = null;
-            string? refresh = null;
-            if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
-            {
-                if (data.TryGetProperty("accessToken", out var at) && at.ValueKind == JsonValueKind.String)
-                    access = at.GetString();
-                if (data.TryGetProperty("refreshToken", out var rt) && rt.ValueKind == JsonValueKind.String)
-                    refresh = rt.GetString();
-            }
+            var access = root.GetProperty("data").GetProperty("accessToken").GetString();
+            var refresh = root.GetProperty("data").TryGetProperty("refreshToken", out var rt) && rt.ValueKind == JsonValueKind.String
+                ? rt.GetString()
+                : null;
 
             if (string.IsNullOrWhiteSpace(access))
                 return (false, "Exchange response did not contain an access token.", null, null);
