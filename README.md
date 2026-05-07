@@ -148,6 +148,11 @@ Use `ProductManagement` as the reference implementation.
 
 ## TMS Components Integration Notes
 
+### Documentation Links
+
+- TMS Core SDK Docs: [http://10.230.8.170/core-sdk-docs/](http://10.230.8.170/core-sdk-docs/)
+- TMS UI Core Docs: [http://10.230.8.170/UiFoundationdocs/](http://10.230.8.170/UiFoundationdocs/)
+
 ### TMS UI Core
 
 The layout uses TMS UI web components:
