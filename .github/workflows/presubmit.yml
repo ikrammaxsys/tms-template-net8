@@ -15,24 +15,8 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
-
-      - name: AI Code Reviewer
-        uses: gauravkrp/ai-code-reviewer@main
-        with:
+      - uses: presubmit/ai-reviewer@latest
+        env:
           GITHUB_TOKEN: ${{ secrets.TOKEN }}
-          AI_PROVIDER: "openai" # Optional: defaults to "openai"
-          OPENAI_API_KEY: ${{ secrets.LLM_API_KEY }}
-          OPENAI_API_MODEL: "gpt-4o-mini" # Optional: defaults to "gpt-4"
-          exclude: "**/*.json, **/*.md" # Optional: exclude patterns separated by commas
-          # Review customization
-          ENABLE_SUMMARY: "true" # Optional: generate a summary of all review findings (default: true)
-          ENABLE_AUTO_FIX: "true" # Optional: generate automated fixes for common issues (default: true)
-          ENABLE_AUTO_PR: "false" # Optional: create a PR that applies all suggested fixes (default: false)
-          REVIEW_FOCUS: "security,performance,bugs" # Optional: customize review focus areas
-          SUGGESTION_STRATEGY: "auto-fix-first" # Optional: controls the suggestion strategy (default: auto-fix-first)
-          # Cache configuration (all optional)
-          CACHE_ENABLED: "true"  # Enable caching (default)
-          CACHE_KEY_PREFIX: "acr-"  # Custom prefix for cache keys
-          CACHE_TTL_DAYS: "7"  # Cache entries expire after 7 days
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_MODEL: "gpt-4o-mini"
