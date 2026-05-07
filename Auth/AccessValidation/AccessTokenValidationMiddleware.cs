@@ -5,7 +5,7 @@ using Microsoft.Extensions.Configuration;
 namespace tms_template_net8.AccessValidation;
 
 /// <summary>
-/// For browser (non-API) routes, requires a valid JWT in the access-token cookie (or query).
+/// Requires a valid JWT cookie and a completed ACL check for protected app routes.
 /// If the access token is expired but a refresh token cookie is present, attempts to refresh via the auth API and updates cookies before continuing.
 /// </summary>
 public sealed class AccessTokenValidationMiddleware
@@ -31,12 +31,12 @@ public sealed class AccessTokenValidationMiddleware
 
         var tokenKey = configuration["Auth:AccessTokenStorageKey"] ?? "authacl_access_token";
         var refreshKey = configuration["Auth:RefreshTokenStorageKey"] ?? "authacl_refresh_token";
-        var token = context.Request.Cookies[tokenKey] ?? context.Request.Query["access_token"].ToString();
+        var token = context.Request.Cookies[tokenKey];
         var appBaseUrl = configuration["App:BaseUrl"] ?? "";
 
         if (string.IsNullOrWhiteSpace(token))
         {
-            context.Response.Redirect(appBaseUrl + "/Home/SessionExpired");
+            await RejectUnauthorizedAsync(context, appBaseUrl);
             return;
         }
 
@@ -44,6 +44,13 @@ public sealed class AccessTokenValidationMiddleware
 
         if (kind == AuthTokenValidationKind.Valid && principal != null)
         {
+            context.User = principal;
+            if (!await HasCompletedAclCheckAsync(context))
+            {
+                await RejectUnauthorizedAsync(context, appBaseUrl);
+                return;
+            }
+
             await _next(context);
             return;
         }
@@ -58,7 +65,7 @@ public sealed class AccessTokenValidationMiddleware
                 {
                     var cookieOptions = new CookieOptions
                     {
-                        HttpOnly = false,
+                        HttpOnly = true,
                         Secure = context.Request.IsHttps,
                         Path = "/",
                         SameSite = SameSiteMode.Lax,
@@ -70,6 +77,13 @@ public sealed class AccessTokenValidationMiddleware
                     var (newPrincipal, newKind) = tokenService.ValidateTokenWithKind(refreshed.AccessToken);
                     if (newKind == AuthTokenValidationKind.Valid && newPrincipal != null)
                     {
+                        context.User = newPrincipal;
+                        if (!await HasCompletedAclCheckAsync(context))
+                        {
+                            await RejectUnauthorizedAsync(context, appBaseUrl);
+                            return;
+                        }
+
                         await _next(context);
                         return;
                     }
@@ -77,7 +91,7 @@ public sealed class AccessTokenValidationMiddleware
             }
         }
 
-        context.Response.Redirect(appBaseUrl + "/Home/SessionExpired");
+        await RejectUnauthorizedAsync(context, appBaseUrl);
     }
 
     private static bool ShouldSkipTokenCheck(PathString path)
@@ -86,9 +100,37 @@ public sealed class AccessTokenValidationMiddleware
         if (!path.HasValue || path == "/")
             return true;
 
-        return path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWithSegments("/ACLChecking", StringComparison.OrdinalIgnoreCase)
+        return path.StartsWithSegments("/ACLChecking", StringComparison.OrdinalIgnoreCase)
             || path.StartsWithSegments("/Home/SessionExpired", StringComparison.OrdinalIgnoreCase)
             || path.StartsWithSegments("/Login", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task<bool> HasCompletedAclCheckAsync(HttpContext context)
+    {
+        await context.Session.LoadAsync(context.RequestAborted);
+        return string.Equals(context.Session.GetString("AclCheckPassed"), "1", StringComparison.Ordinal);
+    }
+
+    private static async Task RejectUnauthorizedAsync(HttpContext context, string appBaseUrl)
+    {
+        if (IsApiRequest(context.Request))
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            context.Response.ContentType = "application/json";
+            await context.Response.WriteAsJsonAsync(new
+            {
+                success = false,
+                message = "Authentication or ACL verification is required."
+            });
+            return;
+        }
+
+        context.Response.Redirect(appBaseUrl + "/Home/SessionExpired");
+    }
+
+    private static bool IsApiRequest(HttpRequest request)
+    {
+        return request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(request.Headers.Accept.ToString(), "application/json", StringComparison.OrdinalIgnoreCase);
     }
 }

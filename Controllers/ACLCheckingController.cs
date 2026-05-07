@@ -2,11 +2,9 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Extensions;
-using AuthACL.CentralAuth.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using WebModels = tms_template_net8.Models;
-using tms_template_net8.Services;
 
 namespace tms_template_net8.Controllers.Web;
 
@@ -16,17 +14,14 @@ public class ACLCheckingController : Controller
     public const string AclSessionKey = "AclCheckPassed";
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
-    private readonly IACLService _aclService;
 
     #region ACLCheckingController
     public ACLCheckingController(
         IHttpClientFactory httpClientFactory,
-        IConfiguration configuration,
-        IACLService aclService)
+        IConfiguration configuration)
     {
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
-        _aclService = aclService;
     }
     #endregion
 
@@ -45,13 +40,7 @@ public class ACLCheckingController : Controller
     {
         var tokenKey = _configuration["Auth:AccessTokenStorageKey"] ?? "authacl_access_token";
         var refreshKey = _configuration["Auth:RefreshTokenStorageKey"] ?? "authacl_refresh_token";
-        var cookieOptions = new CookieOptions
-        {
-            HttpOnly = false,
-            Secure = Request.IsHttps,
-            Path = "/",
-            SameSite = SameSiteMode.Lax,
-        };
+        var cookieOptions = CreateAuthCookieOptions(Request);
 
         var idAclUser = Request.Query["ID_ACL_USER"].ToString().Trim();
         if (!string.IsNullOrEmpty(idAclUser))
@@ -76,7 +65,8 @@ public class ACLCheckingController : Controller
             var qb = new QueryBuilder();
             foreach (var kv in Request.Query)
             {
-                if (string.Equals(kv.Key, "auth-code", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(kv.Key, "auth-code", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(kv.Key, "access_token", StringComparison.OrdinalIgnoreCase))
                     continue;
                 foreach (var v in kv.Value)
                     qb.Add(kv.Key, v ?? string.Empty);
@@ -93,10 +83,19 @@ public class ACLCheckingController : Controller
         {
             Response.Cookies.Delete(tokenKey, cookieOptions);
             Response.Cookies.Append(tokenKey, token, cookieOptions);
+
+            var qb = new QueryBuilder();
+            foreach (var kv in Request.Query)
+            {
+                if (string.Equals(kv.Key, "access_token", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                foreach (var v in kv.Value)
+                    qb.Add(kv.Key, v ?? string.Empty);
+            }
+
+            return LocalRedirect(Request.PathBase + Request.Path + qb.ToQueryString());
         }
 
-        ViewBag.Token = token;
-        ViewBag.TokenKey = tokenKey;
         ViewBag.IdAclUser = Request.Query["ID_ACL_USER"].ToString().Trim();
         return View();
     }
@@ -108,7 +107,12 @@ public class ACLCheckingController : Controller
     {
         await HttpContext.Session.LoadAsync(HttpContext.RequestAborted);
 
-        var token = body?.Token?.Trim() ?? "";
+        var tokenKey = _configuration["Auth:AccessTokenStorageKey"] ?? "authacl_access_token";
+        var token = body?.Token?.Trim();
+        if (string.IsNullOrWhiteSpace(token))
+            token = Request.Cookies[tokenKey]?.Trim();
+        if (string.IsNullOrWhiteSpace(token))
+            return BadRequest(new { success = false, message = "Access token is missing.", redirectUrl = (string?)null });
 
         var authBaseUrl = _configuration["Auth:BaseUrl"]?.Trim();
         var verifyPath = _configuration["Auth:VerifyTokenUrl"]?.Trim();
@@ -125,7 +129,7 @@ public class ACLCheckingController : Controller
             {
                 success = false,
                 message = verifyResult.Message ?? "invalid_token",
-                redirectUrl = verifyResult.RedirectUrl
+                redirectUrl = SafeRedirectUrlOrNull(verifyResult.RedirectUrl)
             });
         }
 
@@ -135,13 +139,12 @@ public class ACLCheckingController : Controller
             HttpContext.Session.SetString("ID_ACL_USER", idAclFromBody);
 
         var sessionAclUser = HttpContext.Session.GetString("ID_ACL_USER")?.Trim();
-        var userInfo = await RetrieveUserDetail(sessionAclUser, token);
-        var sessionUserId = userInfo.UserId ?? sessionAclUser ?? string.Empty;
+        var sessionUserId = sessionAclUser ?? string.Empty;
 
         HttpContext.Session.SetString(AclSessionKey, "1");
         HttpContext.Session.SetString("gstrUserID", sessionUserId);
-        if (!string.IsNullOrEmpty(userInfo.EmpName))
-            HttpContext.Session.SetString("gstrUserName", userInfo.EmpName);
+        if (!string.IsNullOrEmpty(sessionUserId))
+            HttpContext.Session.SetString("gstrUserName", sessionUserId);
 
         var basePath = HttpContext.Request.PathBase.HasValue
             ? HttpContext.Request.PathBase.ToString().TrimEnd('/')
@@ -153,8 +156,8 @@ public class ACLCheckingController : Controller
             success = true,
             redirectUrl = homeUrl,
             userId = sessionUserId,
-            empName = userInfo.EmpName,
-            userName = userInfo.EmpName
+            empName = sessionUserId,
+            userName = sessionUserId
         });
     }
     #endregion
@@ -186,8 +189,12 @@ public class ACLCheckingController : Controller
     {
         HttpContext.Session.Clear();
 
-        foreach (var cookieName in Request.Cookies.Keys)
-            Response.Cookies.Delete(cookieName);
+        var tokenKey = _configuration["Auth:AccessTokenStorageKey"] ?? "authacl_access_token";
+        var refreshKey = _configuration["Auth:RefreshTokenStorageKey"] ?? "authacl_refresh_token";
+        var cookieOptions = CreateAuthCookieOptions(Request);
+        Response.Cookies.Delete(tokenKey, cookieOptions);
+        Response.Cookies.Delete(refreshKey, cookieOptions);
+        Response.Cookies.Delete(".AspNetCore.Session");
 
         var redirectUrl = Url.Action("SessionExpired", "Home") ?? "/Home/SessionExpired";
 
@@ -206,7 +213,11 @@ public class ACLCheckingController : Controller
         if (string.IsNullOrWhiteSpace(baseUrl))
             return (false, "Auth service URL is not configured.", null, null);
 
-        var url = baseUrl.TrimEnd('/') + "/api/auth/exchange-auth-code";
+        var exchangePath = _configuration["Auth:ExchangeAuthCodeUrl"]?.Trim();
+        if (string.IsNullOrWhiteSpace(exchangePath))
+            return (false, "Auth code exchange endpoint is not configured.", null, null);
+
+        var url = baseUrl.TrimEnd('/') + "/" + exchangePath.TrimStart('/');
         try
         {
             var client = _httpClientFactory.CreateClient();
@@ -241,10 +252,55 @@ public class ACLCheckingController : Controller
 
             return (true, null, access.Trim(), string.IsNullOrWhiteSpace(refresh) ? null : refresh.Trim());
         }
-        catch (Exception ex)
+        catch
         {
-            return (false, $"Auth code exchange error: {ex.Message}", null, null);
+            return (false, "Auth code exchange error.", null, null);
         }
+    }
+    #endregion
+
+    #region CreateAuthCookieOptions
+    private static CookieOptions CreateAuthCookieOptions(HttpRequest request)
+    {
+        return new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = request.IsHttps,
+            Path = "/",
+            SameSite = SameSiteMode.Lax,
+        };
+    }
+    #endregion
+
+    #region SafeRedirectUrlOrNull
+    private string? SafeRedirectUrlOrNull(string? redirectUrl)
+    {
+        if (string.IsNullOrWhiteSpace(redirectUrl))
+            return null;
+
+        if (Uri.TryCreate(redirectUrl, UriKind.Relative, out var relativeUri))
+        {
+            var value = relativeUri.ToString();
+            if (value.StartsWith("/", StringComparison.Ordinal) && !value.StartsWith("//", StringComparison.Ordinal))
+                return value;
+        }
+
+        if (!Uri.TryCreate(redirectUrl, UriKind.Absolute, out var target))
+            return null;
+
+        if (Uri.TryCreate($"{Request.Scheme}://{Request.Host}", UriKind.Absolute, out var current)
+            && Uri.Compare(target, current, UriComponents.SchemeAndServer, UriFormat.SafeUnescaped, StringComparison.OrdinalIgnoreCase) == 0)
+            return target.ToString();
+
+        foreach (var configKey in new[] { "Vasp:BaseUrl", "Auth:BaseUrl" })
+        {
+            var configured = _configuration[configKey]?.Trim();
+            if (Uri.TryCreate(configured, UriKind.Absolute, out var allowed)
+                && Uri.Compare(target, allowed, UriComponents.SchemeAndServer, UriFormat.SafeUnescaped, StringComparison.OrdinalIgnoreCase) == 0)
+                return target.ToString();
+        }
+
+        return null;
     }
     #endregion
 
@@ -319,122 +375,11 @@ public class ACLCheckingController : Controller
 
             return (false, message ?? $"Verify API failed with status {(int)response.StatusCode}", redirectUrl);
         }
-        catch (Exception ex)
-        {
-            return (false, $"Verify API error: {ex.Message}", null);
-        }
-    }
-    #endregion
-
-    #region RetrieveUserDetail
-    /// <summary>
-    /// Loads display name (and id when present) from the Vasp ACL user API via <see cref="IACLService"/>.
-    /// </summary>
-    private async Task<WebModels.UserDetail> RetrieveUserDetail(string? lookupUserId, string? bearerToken)
-    {
-        if (string.IsNullOrWhiteSpace(lookupUserId))
-            return new WebModels.UserDetail { UserId = lookupUserId, EmpName = lookupUserId };
-
-        try
-        {
-            var payload = await _aclService.GetUserByIdAsync(lookupUserId, bearerToken, HttpContext.RequestAborted).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(payload))
-            {
-                return new WebModels.UserDetail { UserId = lookupUserId, EmpName = lookupUserId };
-            }
-
-            var displayName = TryParseDisplayNameFromAclUserPayload(payload);
-            var idFromPayload = TryParseUserIdFromAclUserPayload(payload);
-
-            return new WebModels.UserDetail
-            {
-                UserId = idFromPayload ?? lookupUserId,
-                EmpName = displayName ?? lookupUserId
-            };
-        }
-        catch (Exception ex)
-        {
-            return new WebModels.UserDetail { UserId = lookupUserId, EmpName = lookupUserId };
-        }
-    }
-    #endregion
-
-    #region TryParseDisplayNameFromAclUserPayload
-    private static string? TryParseDisplayNameFromAclUserPayload(string payload)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(payload);
-            var root = doc.RootElement;
-            if (root.ValueKind == JsonValueKind.String)
-                return root.GetString();
-
-            if (root.ValueKind != JsonValueKind.Object)
-                return null;
-
-            var target = root;
-            if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
-                target = data;
-
-            return JsonStringOrNumber(target,
-                "empName", "EmpName", "EMP_NAME", "emp_name", "Emp_Name",
-                "employeeName", "EmployeeName", "employee_name",
-                "userName", "UserName", "username", "Username",
-                "fullName", "FullName", "full_name",
-                "displayName", "DisplayName", "display_name",
-                "name", "Name",
-                "user_name", "User_Name");
-        }
         catch
         {
-            var t = payload.Trim();
-            return string.IsNullOrEmpty(t) ? null : t;
+            return (false, "Verify API error.", null);
         }
     }
     #endregion
 
-    #region TryParseUserIdFromAclUserPayload
-    private static string? TryParseUserIdFromAclUserPayload(string payload)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(payload);
-            var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object)
-                return null;
-
-            var target = root;
-            if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
-                target = data;
-
-            return JsonStringOrNumber(target, "id", "Id", "userId", "UserId");
-        }
-        catch
-        {
-            return null;
-        }
-    }
-    #endregion
-
-    #region JsonStringOrNumber
-    private static string? JsonStringOrNumber(JsonElement target, params string[] propertyNames)
-    {
-        if (target.ValueKind != JsonValueKind.Object)
-            return null;
-        foreach (var name in propertyNames)
-        {
-            if (!target.TryGetProperty(name, out var prop))
-                continue;
-            return prop.ValueKind switch
-            {
-                JsonValueKind.String => prop.GetString(),
-                JsonValueKind.Number => prop.ToString(),
-                JsonValueKind.True => "true",
-                JsonValueKind.False => "false",
-                _ => null
-            };
-        }
-        return null;
-    }
-    #endregion
 }

@@ -1,4 +1,8 @@
 ﻿@inject IConfiguration Configuration
+@{
+    var uiFoundationBaseUrl = Configuration["UiFoundation:BaseUrl"] ?? "http://10.230.8.170/uifoundation2";
+    var uiFoundationLoaderUrl = uiFoundationBaseUrl.TrimEnd('/') + "/vendor/loader.js";
+}
 
 <!DOCTYPE html>
 <html lang="en">
@@ -19,7 +23,7 @@
 </head>
 <body>
     @* jQuery must load once before UIFoundation loader (defer) so DataTables plugins stay on the same instance. *@
-    <script src="@Url.Content("~/lib/jquery/jquery.min.js")" asp-append-version="true"></script>
+    <script src="@Url.Content("~/lib/jquery/dist/jquery.min.js")" asp-append-version="true"></script>
     <div class="app-container">
         @await Html.PartialAsync("_Sidebar")
         <div class="app-right">
@@ -37,8 +41,8 @@
         </div>
     </div>
 
-    <script src="http://10.230.8.170/uifoundation2/vendor/loader.js"
-            data-ui-base="http://10.230.8.170/uifoundation2"
+    <script src="@uiFoundationLoaderUrl"
+            data-ui-base="@uiFoundationBaseUrl"
             defer></script>
     <script src="@Url.Content("~/js/loading.js")" asp-append-version="true" defer></script>
     <script src="@Url.Content("~/js/main-nav.js")" asp-append-version="true" defer></script>
