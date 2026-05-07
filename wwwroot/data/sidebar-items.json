@@ -37,5 +37,18 @@
     "deletE_RIGHT": "TRUE",
     "layer": 2,
     "action": 1
+  },
+  {
+    "iD_ACL_RESOURCE": 3,
+    "resourcE_PARENT_ID": 1,
+    "resourcE_NAME": "Product Management",
+    "resourcE_VIEW": "Index",
+    "resourcE_CONTROLLER": "ProductManagement",
+    "vieW_RIGHT": "TRUE",
+    "adD_RIGHT": "TRUE",
+    "ediT_RIGHT": "TRUE",
+    "deletE_RIGHT": "TRUE",
+    "layer": 2,
+    "action": 1
   }
 ]
