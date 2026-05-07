@@ -1,0 +1,75 @@
+@{
+    ViewData["Title"] = "Create Product";
+    var statusOptionsUrl = $"{Context.Request.Scheme}://{Context.Request.Host}{Url.Content("~/data/status-options.json")}";
+}
+
+<form id="productCreateForm" asp-controller="ProductManagement" asp-action="Create" method="post">
+    <ui-page-section title="Create Product">
+        <ui-form-card title="Product Details">
+            <ui-form-content>
+                <div class="row mt-2">
+                    <div class="col-6">
+                        <ui-text-input name="Name" id="Name" required label="Product Name" type="text"
+                            placeholder="Enter product name">
+                        </ui-text-input>
+                    </div>
+                    <div class="col-6">
+                        <ui-text-input name="Sku" id="Sku" required label="SKU" type="text"
+                            placeholder="Enter SKU">
+                        </ui-text-input>
+                    </div>
+                </div>
+                <div class="row mt-2">
+                    <div class="col-6">
+                        <ui-text-input name="Price" id="Price" required label="Price" type="number"
+                            placeholder="Enter price">
+                        </ui-text-input>
+                    </div>
+                    <div class="col-6">
+                        <ui-dropdown name="Status"
+                                     required
+                                     id="Status"
+                                     label="Status"
+                                     value="Active"
+                                     ui-source="@statusOptionsUrl"
+                                     placeholder="Select status">
+                        </ui-dropdown>
+                    </div>
+                </div>
+                <div class="row mt-2">
+                    <div class="col-12">
+                        <ui-text-input name="Description" id="Description" label="Description" type="text"
+                            placeholder="Enter description">
+                        </ui-text-input>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-6"></div>
+                    <div class="col-6" style="float:right">
+                        <div class="d-flex gap-2 justify-content-end flex-wrap">
+                            <ui-button label="Back" type="button" id="btnCancel" class="btn-right"></ui-button>
+                            <ui-button label="Submit" type="button" id="btnSubmit" class="btn-right"
+                                data-bs-toggle="modal" data-bs-target="#submit-confirmation-modal"></ui-button>
+                        </div>
+                    </div>
+                </div>
+            </ui-form-content>
+        </ui-form-card>
+    </ui-page-section>
+</form>
+
+@await Html.PartialAsync("~/Views/Shared/_ConfirmationModal.cshtml", new tms_template_net8.ViewModels.ConfirmationModalViewModel { ModalId = "submit-confirmation-modal", Message = "Are you sure you want to create this product?", ConfirmButtonId = "btnConfirm" })
+
+@section Scripts {
+    <script type="text/javascript">
+        window.productManagementCreateConfig = {
+            urls: {
+                index: '@Url.Action("Index", "ProductManagement")'
+            }
+        };
+    </script>
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+    <script src="~/js/apiClient.js" asp-append-version="true"></script>
+    <script type="module" src="~/ProductManagement/js/create.js" asp-append-version="true"></script>
+}

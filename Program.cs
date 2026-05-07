@@ -1,9 +1,10 @@
-using AuthACL.CentralAuth.Jwt;
-using AuthACL.CentralAuth.AccessValidation;
+using tms_template_net8.Jwt;
 using tms_template_net8.Services;
 using TMS.WebApp.Sdk.DependencyInjection;
+using tms_template_net8.AccessValidation;
 
 var builder = WebApplication.CreateBuilder(args);
+await PublicPemSync.SyncAsync(builder.Configuration, builder.Environment);
 
 // Add services to the container.
 builder.Services.AddControllersWithViews();
@@ -23,6 +24,12 @@ builder.Services.AddTmsWebAppSdk(builder.Configuration, opts =>
 {
     // Optional: override options after binding from configuration
 });
+builder.Services.AddScoped<ICoreAPIService, CoreAPIService>();
+
+// register module for app specific services
+builder.Services.AddSingleton<IProductService, ProductService>();
+
+
 builder.Services.AddSession();
 
 var app = builder.Build();
@@ -49,7 +56,6 @@ app.Use((ctx, next) =>
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseAccessTokenValidation();
-
 app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseRouting();
