@@ -27,16 +27,16 @@ public sealed class UserAccessControlService : IUserAccessControlService
         _logger = logger;
     }
 
-    public string SessionKey => DefaultSessionKey;
-
     public async Task<UserAclData?> LoadAndStoreAsync(HttpContext context, string idAclUser, string? bearerToken, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(context);
         if (string.IsNullOrWhiteSpace(idAclUser))
             return null;
-        var url = $"{_configuration["Vasp:BaseUrl"]?.Trim()}/api/users/{idAclUser}/role-access";
-        if (string.IsNullOrWhiteSpace(url))
+
+        var baseUrl = _configuration["Vasp:BaseUrl"]?.Trim();
+        if (string.IsNullOrWhiteSpace(baseUrl))
             return null;
+        var url = $"{baseUrl.TrimEnd('/')}/api/users/{idAclUser}/role-access";
 
         try
         {
@@ -58,7 +58,7 @@ public sealed class UserAccessControlService : IUserAccessControlService
 
             await context.Session.LoadAsync(cancellationToken).ConfigureAwait(false);
             var json = JsonSerializer.Serialize(data);
-            context.Session.SetString(SessionKey, json);
+            context.Session.SetString(DefaultSessionKey, json);
             await context.Session.CommitAsync(cancellationToken).ConfigureAwait(false);
 
             return data;
@@ -78,7 +78,7 @@ public sealed class UserAccessControlService : IUserAccessControlService
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        var raw = context.Session.GetString(SessionKey);
+        var raw = context.Session.GetString(DefaultSessionKey);
         if (string.IsNullOrWhiteSpace(raw))
             return null;
 
@@ -102,7 +102,7 @@ public sealed class UserAccessControlService : IUserAccessControlService
     public void Clear(HttpContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        context.Session.Remove(SessionKey);
+        context.Session.Remove(DefaultSessionKey);
     }
 
     private static UserAclData? ParsePayload(string payload)

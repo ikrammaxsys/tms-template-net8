@@ -10,11 +10,8 @@ namespace tms_template_net8.Services;
 /// </summary>
 public interface IUserAccessControlService
 {
-    /// <summary>Session key used to store the serialized <see cref="UserAclData"/> payload.</summary>
-    string SessionKey { get; }
-
     /// <summary>
-    /// Calls the configured <c>Auth:UserRolesAndAccessUrl</c> endpoint, parses the standard
+    /// Calls the configured ACL endpoint, parses the standard
     /// <c>{ success, data: { user, roles, accessControls } }</c> envelope, and stores the result in session.
     /// Returns the loaded snapshot, or <c>null</c> if the call failed (the failure is non-fatal so
     /// the caller can still surface a friendly error).
