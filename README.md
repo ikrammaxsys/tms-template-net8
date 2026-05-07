@@ -75,6 +75,7 @@ Primary runtime settings are in `appsettings.json`:
   - `ExchangeAuthCodeUrl`
   - `RefreshTokenApiUrl`
   - `LogoutApiUrl`
+  - `UserRolesAndAccessUrl` — endpoint that returns `{ data: { user, roles, accessControls } }` for the page-access filter. Supports `{idAclUser}` placeholder, e.g. `/api/users/{idAclUser}/roles-and-access`. May be a path (combined with `BaseUrl`) or an absolute URL.
   - `AccessTokenStorageKey`
   - `RefreshTokenStorageKey`
 - `Vasp`
@@ -191,6 +192,50 @@ If your ACL endpoints or payload contracts differ, update:
 - `Auth` section values
 - `ACLCheckingController` parsing/mapping logic
 - `IACLService`/`ACLService` request paths
+
+### Page-Level Access Control
+
+Per-route policy-style authorization based on the user's `accessControls` map.
+
+How it flows:
+
+1. After token verify, `ACLCheckingController.Verify` calls `Auth:UserRolesAndAccessUrl` (with bearer token) and stores the parsed `UserAclData` (user + roles + per-resource rights) **server-side** in `HttpContext.Session` under key `UserAclData`.
+2. Controllers/actions are decorated with `[RequirePageAccess("<access name>", AccessRight.View|Add|Edit|Delete)]`. The access name must match a key in the `accessControls` dictionary.
+3. `PageAccessAuthorizationFilter` runs before the action, reads the snapshot from session via `IUserAccessControlService`, and either lets the request through or short-circuits to `/Home/AccessDenied` (HTTP 403). AJAX/`/api/*` requests get a JSON 403 instead of a redirect.
+
+Example (see `Controllers/Web/ProductManagementController.cs`):
+
+```csharp
+[Route("[controller]")]
+[RequirePageAccess("PAB Sites", AccessRight.View)]
+public class ProductManagementController : Controller
+{
+    [HttpGet("Create")]
+    [RequirePageAccess("PAB Sites", AccessRight.Add)]
+    public IActionResult Create() => View();
+
+    [HttpGet("Edit/{id:int}")]
+    [RequirePageAccess("PAB Sites", AccessRight.Edit)]
+    public IActionResult Edit(int id) { ... }
+}
+```
+
+Programmatic checks (e.g. inside an action or view):
+
+```csharp
+public class MyController : Controller
+{
+    private readonly IUserAccessControlService _acl;
+    public MyController(IUserAccessControlService acl) { _acl = acl; }
+
+    public IActionResult Index()
+    {
+        var canEdit = _acl.HasAccess(HttpContext, "PAB Sites", AccessRight.Edit);
+        var snapshot = _acl.GetCurrent(HttpContext); // user, roles, full map
+        return View(new { canEdit, snapshot });
+    }
+}
+```
 
 ## Included Sample Endpoints
 

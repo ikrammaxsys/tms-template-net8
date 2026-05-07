@@ -17,16 +17,19 @@ public class ACLCheckingController : Controller
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
     private readonly IACLService _aclService;
+    private readonly IUserAccessControlService _accessControlService;
 
     #region ACLCheckingController
     public ACLCheckingController(
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration,
-        IACLService aclService)
+        IACLService aclService,
+        IUserAccessControlService accessControlService)
     {
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
         _aclService = aclService;
+        _accessControlService = accessControlService;
     }
     #endregion
 
@@ -135,13 +138,22 @@ public class ACLCheckingController : Controller
             HttpContext.Session.SetString("ID_ACL_USER", idAclFromBody);
 
         var sessionAclUser = HttpContext.Session.GetString("ID_ACL_USER")?.Trim();
+
+        // Load full ACL snapshot (user + roles + accessControls) into session for page-level authorization.
+        WebModels.UserAclData? aclSnapshot = null;
+        if (!string.IsNullOrWhiteSpace(sessionAclUser))
+        {
+            aclSnapshot = await _accessControlService.LoadAndStoreAsync(HttpContext, sessionAclUser, token, HttpContext.RequestAborted);
+        }
+
         var userInfo = await RetrieveUserDetail(sessionAclUser, token);
-        var sessionUserId = userInfo.UserId ?? sessionAclUser ?? string.Empty;
+        var sessionUserId = aclSnapshot?.User?.UserId ?? userInfo.UserId ?? sessionAclUser ?? string.Empty;
+        var sessionUserName = aclSnapshot?.User?.EmpName ?? userInfo.EmpName;
 
         HttpContext.Session.SetString(AclSessionKey, "1");
         HttpContext.Session.SetString("gstrUserID", sessionUserId);
-        if (!string.IsNullOrEmpty(userInfo.EmpName))
-            HttpContext.Session.SetString("gstrUserName", userInfo.EmpName);
+        if (!string.IsNullOrEmpty(sessionUserName))
+            HttpContext.Session.SetString("gstrUserName", sessionUserName);
 
         var basePath = HttpContext.Request.PathBase.HasValue
             ? HttpContext.Request.PathBase.ToString().TrimEnd('/')
@@ -153,8 +165,10 @@ public class ACLCheckingController : Controller
             success = true,
             redirectUrl = homeUrl,
             userId = sessionUserId,
-            empName = userInfo.EmpName,
-            userName = userInfo.EmpName
+            empName = sessionUserName,
+            userName = sessionUserName,
+            roles = aclSnapshot?.Roles,
+            accessLoaded = aclSnapshot != null
         });
     }
     #endregion
@@ -184,6 +198,7 @@ public class ACLCheckingController : Controller
     [HttpPost("logout")]
     public IActionResult Logout()
     {
+        _accessControlService.Clear(HttpContext);
         HttpContext.Session.Clear();
 
         foreach (var cookieName in Request.Cookies.Keys)
