@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="AuthACL.CentralAuth" Version="0.1.1" />
+    <PackageReference Include="TMS.WebApp.Sdk" Version="0.0.1" />
   </ItemGroup>
 
 </Project>
