@@ -1,0 +1,71 @@
+@{
+    ViewData["Title"] = "Product Listing";
+}
+
+<div class="row g-0 px-3 tr-listing-header">
+    <div class="col-sm-6 align-self-center">
+        <p class="text-muted m-0 tr-listing-header-title">Main Listing - Product</p>
+    </div>
+    <div class="col-sm-6 text-end align-self-center">
+        <div class="col-6" style="float:right" data-create-url="@Url.Action("Create", "ProductManagement")">
+            <ui-button label="Create Product" type="button" name="btn1" id="btnAdd" class="btn-right"></ui-button>
+        </div>
+    </div>
+</div>
+<div class="tr-btm-line"></div>
+
+<ui-page-section title="Listing Table">
+    <ui-datatable id="productTable" ui-source="@Url.Action("GetList", "ProductManagement")" row-click="redirect"
+                  include-checkbox="true" route-template="@Url.Content("~/ProductManagement/Detail/{Id}")" fixed-left-column="2"
+                  fixed-right-column="2">
+        <script type="application/json" slot="columns">
+                            [
+                                { "data": "Id", "title": "ID", "width": "10%" },
+                                { "data": "Name", "title": "Name", "width": "25%" },
+                                { "data": "Sku", "title": "SKU", "width": "20%" },
+                                { "data": "Price", "title": "Price", "width": "15%" },
+                                { "data": "Status", "title": "Status", "renderName": "__status", "width": "15%" }
+                            ]
+        </script>
+    </ui-datatable>
+</ui-page-section>
+
+@section Scripts {
+    <script>
+        (function () {
+            document.addEventListener('click', function (e) {
+                var path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+                var wrap = null;
+                var i;
+                for (i = 0; i < path.length; i++) {
+                    var p = path[i];
+                    if (p && p.nodeType === 1 && p.hasAttribute && p.hasAttribute('data-create-url')) {
+                        wrap = p;
+                        break;
+                    }
+                }
+                if (!wrap && e.target && typeof e.target.closest === 'function') {
+                    wrap = e.target.closest('[data-create-url]');
+                }
+                if (!wrap) {
+                    var host = null;
+                    for (i = 0; i < path.length; i++) {
+                        var el = path[i];
+                        if (el && el.id === 'btnAdd') {
+                            host = el;
+                            break;
+                        }
+                    }
+                    if (host && host.closest) {
+                        wrap = host.closest('[data-create-url]');
+                    }
+                }
+                if (!wrap) return;
+                e.preventDefault();
+                var url = wrap.getAttribute('data-create-url');
+                if (!url) url = '@Url.Action("Create", "ProductManagement")';
+                if (window.spaNavigate) { window.spaNavigate(url); } else { window.location.href = url; }
+            }, true);
+        })();
+    </script>
+}

@@ -1,0 +1,21 @@
+@model tms_template_net8.ViewModels.ConfirmationModalViewModel
+@{
+    var btnClass = Model.UseSmallButtons ? "btn btn-sm" : "btn";
+}
+<div class="modal fade" id="@Model.ModalId" tabindex="-1" aria-labelledby="@(Model.ModalId)-label" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">@Model.Title</h5>
+            </div>
+            <hr />
+            <div class="modal-body">
+                <h6>@Model.Message</h6>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="@btnClass btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="@btnClass btn-primary" data-bs-dismiss="modal" id="@Model.ConfirmButtonId">Confirm</button>
+            </div>
+        </div>
+    </div>
+</div>

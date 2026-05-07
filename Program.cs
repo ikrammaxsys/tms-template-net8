@@ -20,6 +20,11 @@ builder.Services.AddHttpClient("Vasp", (sp, client) =>
 builder.Services.AddScoped<IAuthTokenRefreshService, AuthTokenRefreshService>();
 builder.Services.AddScoped<IACLService, ACLService>();
 builder.Services.AddScoped<ICoreAPIService, CoreAPIService>();
+
+// register module for app specific services
+builder.Services.AddSingleton<IProductService, ProductService>();
+
+
 builder.Services.AddSession();
 
 var app = builder.Build();
