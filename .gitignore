@@ -96,3 +96,4 @@ Generated_Code/
 *.bak
 *.tmp
 *.temp
+.build-temp*/

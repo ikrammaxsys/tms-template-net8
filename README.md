@@ -80,6 +80,8 @@ Primary runtime settings are in `appsettings.json`:
   - `RefreshTokenStorageKey`
 - `Vasp`
   - `BaseUrl` (ACL/VASP UI base URL)
+- `UiFoundation`
+  - `BaseUrl` (TMS UI web component loader base URL)
 - `CoreApi`
   - `BaseUrl` (TMS Core API base URL)
 
@@ -162,7 +164,7 @@ The layout uses TMS UI web components:
 - `<ui-topbar>` in `_Topbar.cshtml`
 - `<ui-page-section>`, `<ui-form-card>`, `<ui-form-content>`, `<ui-text-input>`, `<ui-dropdown>`, `<ui-button>`, `<ui-datatable>` in module pages
 
-These are loaded via UI Foundation loader script in `Views/Shared/_Layout.cshtml`. Update the loader host if your UI Core environment differs.
+These are loaded via the UI Foundation loader script in `Views/Shared/_Layout.cshtml`. Configure `UiFoundation:BaseUrl` for your UI Core environment.
 
 ### TMS Core SDK / Common Module
 

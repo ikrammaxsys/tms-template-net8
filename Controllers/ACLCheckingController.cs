@@ -1,11 +1,10 @@
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using tms_template_net8.Models;
-using tms_template_net8.Services;
+using tms_template_net8.Tokens;
+using WebModels = tms_template_net8.Models;
 
 namespace tms_template_net8.Controllers.Web;
 
@@ -13,24 +12,23 @@ namespace tms_template_net8.Controllers.Web;
 public class ACLCheckingController : Controller
 {
     public const string AclSessionKey = "AclCheckPassed";
-
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
-    private readonly IACLService _aclService;
-    private readonly IUserAccessControlService _accessControlService;
+    private readonly ITokenService _tokenService;
 
+    #region ACLCheckingController
     public ACLCheckingController(
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration,
-        IACLService aclService,
-        IUserAccessControlService accessControlService)
+        ITokenService tokenService)
     {
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
-        _aclService = aclService;
-        _accessControlService = accessControlService;
+        _tokenService = tokenService;
     }
+    #endregion
 
+    #region Index
     /// <summary>
     /// Entry URL from the external login app (canonical path), e.g.
     /// <c>https://host/ACLChecking/?ID_ACL_USER=7171&amp;auth-code=...</c>
@@ -45,13 +43,7 @@ public class ACLCheckingController : Controller
     {
         var tokenKey = _configuration["Auth:AccessTokenStorageKey"] ?? "authacl_access_token";
         var refreshKey = _configuration["Auth:RefreshTokenStorageKey"] ?? "authacl_refresh_token";
-        var cookieOptions = new CookieOptions
-        {
-            HttpOnly = false,
-            Secure = Request.IsHttps,
-            Path = "/",
-            SameSite = SameSiteMode.Lax,
-        };
+        var cookieOptions = CreateAuthCookieOptions(Request);
 
         var idAclUser = Request.Query["ID_ACL_USER"].ToString().Trim();
         if (!string.IsNullOrEmpty(idAclUser))
@@ -76,7 +68,8 @@ public class ACLCheckingController : Controller
             var qb = new QueryBuilder();
             foreach (var kv in Request.Query)
             {
-                if (string.Equals(kv.Key, "auth-code", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(kv.Key, "auth-code", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(kv.Key, "access_token", StringComparison.OrdinalIgnoreCase))
                     continue;
                 foreach (var v in kv.Value)
                     qb.Add(kv.Key, v ?? string.Empty);
@@ -93,60 +86,53 @@ public class ACLCheckingController : Controller
         {
             Response.Cookies.Delete(tokenKey, cookieOptions);
             Response.Cookies.Append(tokenKey, token, cookieOptions);
+
+            var qb = new QueryBuilder();
+            foreach (var kv in Request.Query)
+            {
+                if (string.Equals(kv.Key, "access_token", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                foreach (var v in kv.Value)
+                    qb.Add(kv.Key, v ?? string.Empty);
+            }
+
+            return LocalRedirect(Request.PathBase + Request.Path + qb.ToQueryString());
         }
 
-        ViewBag.Token = token;
-        ViewBag.TokenKey = tokenKey;
         ViewBag.IdAclUser = Request.Query["ID_ACL_USER"].ToString().Trim();
         return View();
     }
+    #endregion
 
+    #region Verify
     [HttpPost("verify")]
-    public async Task<IActionResult> Verify([FromBody] AclTokenRequest? body)
+    public async Task<IActionResult> Verify([FromBody] WebModels.AclTokenRequest? body)
     {
         await HttpContext.Session.LoadAsync(HttpContext.RequestAborted);
 
-        var token = body?.Token?.Trim() ?? "";
+        var tokenKey = _configuration["Auth:AccessTokenStorageKey"] ?? "authacl_access_token";
+        var token = body?.Token?.Trim();
+        if (string.IsNullOrWhiteSpace(token))
+            token = Request.Cookies[tokenKey]?.Trim();
+        if (string.IsNullOrWhiteSpace(token))
+            return BadRequest(new { success = false, message = "Access token is missing.", redirectUrl = (string?)null });
 
-        var authBaseUrl = _configuration["Auth:BaseUrl"]?.Trim();
-        var verifyPath = _configuration["Auth:VerifyTokenUrl"]?.Trim();
-        if (string.IsNullOrWhiteSpace(authBaseUrl) || string.IsNullOrWhiteSpace(verifyPath))
-            return BadRequest(new { success = false, message = "Auth:VerifyTokenUrl is not configured", redirectUrl = (string?)null });
+        var (_, tokenKind) = _tokenService.ValidateTokenWithKind(token);
+        if (tokenKind != AuthTokenValidationKind.Valid)
+            return BadRequest(new { success = false, message = tokenKind == AuthTokenValidationKind.Expired ? "token_expired" : "invalid_token", redirectUrl = (string?)null });
 
-        var verifyUrl = authBaseUrl.TrimEnd('/') + "/" + verifyPath.TrimStart('/');
-
-        var verifyResult = await VerifyTokenExternalAsync(token, verifyUrl);
-        if (!verifyResult.Success)
-        {
-            // Always include redirectUrl, even if null
-            return BadRequest(new
-            {
-                success = false,
-                message = verifyResult.Message ?? "invalid_token",
-                redirectUrl = verifyResult.RedirectUrl
-            });
-        }
-
+        // Prefer explicit ID from POST (survives missing/stale session cookie), then session.
         var idAclFromBody = body?.IdAclUser?.Trim();
         if (!string.IsNullOrEmpty(idAclFromBody))
             HttpContext.Session.SetString("ID_ACL_USER", idAclFromBody);
 
         var sessionAclUser = HttpContext.Session.GetString("ID_ACL_USER")?.Trim();
-
-        UserAclData? aclSnapshot = null;
-        if (!string.IsNullOrWhiteSpace(sessionAclUser))
-        {
-            aclSnapshot = await _accessControlService.LoadAndStoreAsync(HttpContext, sessionAclUser, token, HttpContext.RequestAborted);
-        }
-
-        var userInfo = await RetrieveUserDetail(sessionAclUser, token);
-        var sessionUserId = aclSnapshot?.User?.UserId ?? userInfo.UserId ?? sessionAclUser ?? string.Empty;
-        var sessionUserName = aclSnapshot?.User?.EmpName ?? userInfo.EmpName;
+        var sessionUserId = sessionAclUser ?? string.Empty;
 
         HttpContext.Session.SetString(AclSessionKey, "1");
         HttpContext.Session.SetString("gstrUserID", sessionUserId);
-        if (!string.IsNullOrEmpty(sessionUserName))
-            HttpContext.Session.SetString("gstrUserName", sessionUserName);
+        if (!string.IsNullOrEmpty(sessionUserId))
+            HttpContext.Session.SetString("gstrUserName", sessionUserId);
 
         var basePath = HttpContext.Request.PathBase.HasValue
             ? HttpContext.Request.PathBase.ToString().TrimEnd('/')
@@ -158,13 +144,13 @@ public class ACLCheckingController : Controller
             success = true,
             redirectUrl = homeUrl,
             userId = sessionUserId,
-            empName = sessionUserName,
-            userName = sessionUserName,
-            roles = aclSnapshot?.Roles,
-            accessLoaded = aclSnapshot != null
+            empName = sessionUserId,
+            userName = sessionUserId
         });
     }
+    #endregion
 
+    #region LogoutPage
     /// <summary>
     /// Shows a full-page signing-out screen; the browser then POSTs to <see cref="Logout"/> to end the session.
     /// </summary>
@@ -180,18 +166,23 @@ public class ACLCheckingController : Controller
         ViewBag.LogoutPostUrl = Url.Action(nameof(Logout), "ACLChecking");
         return View();
     }
+    #endregion
 
+    #region Logout
     /// <summary>
     /// Ends the app session, clears all cookies, and returns a redirect URL for the browser.
     /// </summary>
     [HttpPost("logout")]
     public IActionResult Logout()
     {
-        _accessControlService.Clear(HttpContext);
         HttpContext.Session.Clear();
 
-        foreach (var cookieName in Request.Cookies.Keys)
-            Response.Cookies.Delete(cookieName);
+        var tokenKey = _configuration["Auth:AccessTokenStorageKey"] ?? "authacl_access_token";
+        var refreshKey = _configuration["Auth:RefreshTokenStorageKey"] ?? "authacl_refresh_token";
+        var cookieOptions = CreateAuthCookieOptions(Request);
+        Response.Cookies.Delete(tokenKey, cookieOptions);
+        Response.Cookies.Delete(refreshKey, cookieOptions);
+        Response.Cookies.Delete(".AspNetCore.Session");
 
         var redirectUrl = Url.Action("SessionExpired", "Home") ?? "/Home/SessionExpired";
 
@@ -201,14 +192,20 @@ public class ACLCheckingController : Controller
             redirectUrl
         });
     }
+    #endregion
 
+    #region ExchangeAuthCodeAsync
     private async Task<(bool Success, string? Message, string? AccessToken, string? RefreshToken)> ExchangeAuthCodeAsync(string authCode)
     {
         var baseUrl = _configuration["Auth:BaseUrl"]?.Trim();
         if (string.IsNullOrWhiteSpace(baseUrl))
             return (false, "Auth service URL is not configured.", null, null);
 
-        var url = baseUrl.TrimEnd('/') + "/api/auth/exchange-auth-code";
+        var exchangePath = _configuration["Auth:ExchangeAuthCodeUrl"]?.Trim();
+        if (string.IsNullOrWhiteSpace(exchangePath))
+            return (false, "Auth code exchange endpoint is not configured.", null, null);
+
+        var url = baseUrl.TrimEnd('/') + "/" + exchangePath.TrimStart('/');
         try
         {
             var client = _httpClientFactory.CreateClient();
@@ -243,12 +240,27 @@ public class ACLCheckingController : Controller
 
             return (true, null, access.Trim(), string.IsNullOrWhiteSpace(refresh) ? null : refresh.Trim());
         }
-        catch (Exception ex)
+        catch
         {
-            return (false, $"Auth code exchange error: {ex.Message}", null, null);
+            return (false, "Auth code exchange error.", null, null);
         }
     }
+    #endregion
 
+    #region CreateAuthCookieOptions
+    private static CookieOptions CreateAuthCookieOptions(HttpRequest request)
+    {
+        return new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = request.IsHttps,
+            Path = "/",
+            SameSite = SameSiteMode.Lax,
+        };
+    }
+    #endregion
+
+    #region TryParseApiErrorMessage
     private static string? TryParseApiErrorMessage(string payload)
     {
         try
@@ -259,10 +271,6 @@ public class ACLCheckingController : Controller
                 return null;
             if (root.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String)
                 return m.GetString();
-            if (root.TryGetProperty("error_description", out var desc) && desc.ValueKind == JsonValueKind.String)
-                return desc.GetString();
-            if (root.TryGetProperty("error", out var err) && err.ValueKind == JsonValueKind.String)
-                return err.GetString();
             if (root.TryGetProperty("errors", out var errs) && errs.ValueKind == JsonValueKind.Array && errs.GetArrayLength() > 0)
             {
                 var first = errs[0];
@@ -277,77 +285,6 @@ public class ACLCheckingController : Controller
 
         return null;
     }
+    #endregion
 
-    private async Task<(bool Success, string? Message, string? RedirectUrl)> VerifyTokenExternalAsync(string token, string verifyUrl)
-    {
-        try
-        {
-            var client = _httpClientFactory.CreateClient();
-            using var request = new HttpRequestMessage(HttpMethod.Get, verifyUrl);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            request.Headers.Accept.ParseAdd("application/json");
-
-            using var response = await client.SendAsync(request);
-            var payload = await response.Content.ReadAsStringAsync();
-
-            if (response.IsSuccessStatusCode)
-                return (true, null, null);
-
-            var message = TryParseApiErrorMessage(payload);
-            string? redirectUrl = null;
-
-            using var doc = JsonDocument.Parse(payload);
-            var root = doc.RootElement;
-            if (root.TryGetProperty("data", out var dataNode) && dataNode.ValueKind == JsonValueKind.Object)
-            {
-                if (dataNode.TryGetProperty("redirectUrl", out var redirectUrlNode))
-                    redirectUrl = redirectUrlNode.GetString();
-            }
-
-            return (false, message ?? $"Verify API failed with status {(int)response.StatusCode}", redirectUrl);
-        }
-        catch (JsonException)
-        {
-            return (false, "Verify API returned an invalid JSON response.", null);
-        }
-        catch (Exception ex)
-        {
-            return (false, $"Verify API error: {ex.Message}", null);
-        }
-    }
-
-    /// <summary>
-    /// Loads display name (and id when present) from the Vasp ACL user API via <see cref="IACLService"/>.
-    /// </summary>
-    private async Task<UserDetail> RetrieveUserDetail(string? lookupUserId, string? bearerToken)
-    {
-        if (string.IsNullOrWhiteSpace(lookupUserId))
-            return new UserDetail { UserId = lookupUserId, EmpName = lookupUserId };
-
-        try
-        {
-            var payload = await _aclService.GetUserByIdAsync(lookupUserId, bearerToken, HttpContext.RequestAborted).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(payload))
-                return new UserDetail { UserId = lookupUserId, EmpName = lookupUserId };
-
-            using var doc = JsonDocument.Parse(payload);
-            var userJson = doc.RootElement;
-            if (userJson.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
-                userJson = data;
-
-            var user = JsonSerializer.Deserialize<UserDetail>(
-                userJson.GetRawText(),
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-            return new UserDetail
-            {
-                UserId = user?.UserId ?? lookupUserId,
-                EmpName = user?.EmpName ?? lookupUserId
-            };
-        }
-        catch
-        {
-            return new UserDetail { UserId = lookupUserId, EmpName = lookupUserId };
-        }
-    }
 }

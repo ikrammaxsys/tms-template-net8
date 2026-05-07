@@ -31,7 +31,14 @@ builder.Services.AddScoped<ICoreAPIService, CoreAPIService>();
 builder.Services.AddSingleton<IProductService, ProductService>();
 
 
-builder.Services.AddSession();
+builder.Services.AddDistributedMemoryCache();
+builder.Services.AddSession(options =>
+{
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = SameSiteMode.Lax;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+    options.IdleTimeout = TimeSpan.FromMinutes(30);
+});
 
 var app = builder.Build();
 
@@ -42,6 +49,9 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
+app.UseHttpsRedirection();
+app.UseStaticFiles();
+app.UseRouting();
 app.UseSession();
 
 // Canonical ACL entry is /ACLChecking/?... (not /). Redirect bare / so wrong redirect URIs still work.
@@ -54,12 +64,7 @@ app.Use((ctx, next) =>
     return Task.CompletedTask;
 });
 
-app.UseAuthentication();
-app.UseAuthorization();
 app.UseAccessTokenValidation();
-app.UseHttpsRedirection();
-app.UseStaticFiles();
-app.UseRouting();
 
 app.MapControllerRoute(
     name: "default",

@@ -39,20 +39,26 @@
 @if (ViewBag.Error == null)
 {
 <script>
-    function aclGetCookie(name) {
-        var m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/([.$?*|{}()[\]\\/+^])/g, '\\$1') + '=([^;]*)'));
-        return m ? decodeURIComponent(m[1]) : '';
-    }
     document.addEventListener('DOMContentLoaded', function () {
-        var tokenKey = @Html.Raw(JsonSerializer.Serialize(ViewBag.TokenKey ?? "authacl_access_token"));
-        var tokenFromQuery = @Html.Raw(JsonSerializer.Serialize((string)(ViewBag.Token ?? "")));
         var idAclFromServer = @Html.Raw(JsonSerializer.Serialize((string)(ViewBag.IdAclUser ?? "")));
-        var token = (tokenFromQuery && String(tokenFromQuery).trim()) || aclGetCookie(tokenKey) || "";
         var qs = new URLSearchParams(window.location.search);
         var idAclUser = (idAclFromServer && String(idAclFromServer).trim()) || (qs.get('ID_ACL_USER') || '').trim();
         var verifyUrl = '@Url.Action("Verify", "ACLChecking")';
-        var verifyBody = { token: token };
+        var verifyBody = {};
         if (idAclUser) verifyBody.idAclUser = idAclUser;
+
+        function redirectIfSafe(url) {
+            if (!url) return;
+            try {
+                var parsed = new URL(url, window.location.origin);
+                if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+                    window.location.href = parsed.href;
+                }
+            } catch (_) {
+                // Ignore malformed redirect URLs.
+            }
+        }
+
         fetch(verifyUrl, {
             method: 'POST',
             credentials: 'same-origin',
@@ -67,7 +73,6 @@
             });
         }).then(function (result) {
             var data = result.data;
-            console.log("data", data);
               if (data.success) {
                   var homeUrl = data.redirectUrl || '@Url.Content("~/Home/Index")';
                   $('#acl-checking-root').html(`
@@ -84,10 +89,9 @@
                       </div>
                   `);
                   setTimeout(function () {
-                      window.location.href = homeUrl;
+                      redirectIfSafe(homeUrl);
                   }, 1500);
               } else {
-                  // Token is invalid, show error message
                   $('#acl-checking-root').html(`
                       <div class="text-center">
                         <div class="mb-3">
@@ -95,15 +99,14 @@
                               <path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0zm-4.146-3.146a.5.5 0 0 0-.708-.708L8 7.293 4.854 4.146a.5.5 0 1 0-.708.708L7.293 8l-3.147 3.146a.5.5 0 0 0 .708.708L8 8.707l3.146 3.147a.5.5 0 0 0 .708-.708L8.707 8l3.147-3.146z"/>
                             </svg>
                         </div>
-                          <div class="alert alert-danger" role="alert">
-                              ${data.message || 'Token validation failed.'}
-                          </div>
+                          <div id="acl-error-message" class="alert alert-danger" role="alert"></div>
                           <p class="text-muted">Please check your authentication and try again.</p>
                       </div>
                   `);
+                  $('#acl-error-message').text(data.message || 'Token validation failed.');
                    setTimeout(function () {
                       var ru = data.redirectUrl || (data.data && data.data.redirectUrl);
-                      if (ru) window.location.href = ru;
+                      redirectIfSafe(ru);
                   }, 1500);
               }
         })
