@@ -18,11 +18,11 @@ public class HomeController : Controller
         _sql = sql;
     }
 
-    public IActionResult Index(CancellationToken ct)
+    public async Task<IActionResult> Index(CancellationToken ct)
     {
         List<SqlParameter> _pMssql = new List<SqlParameter>();
         _pMssql.Add(new SqlParameter("@testParameter", "Admin"));
-        var dt = _sql.ExecuteAsync("PSP_SELECT_EMPLOYEES", CommandType.StoredProcedure, _pMssql, "StdTemplate_DEV", cancellationToken: ct);
+        var dt = await _sql.ExecuteAsync("PSP_SELECT_EMPLOYEES", CommandType.StoredProcedure, _pMssql, "StdTemplate_DEV", cancellationToken: ct);
         return View();
     }
 
