@@ -2,10 +2,9 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Extensions;
-using AuthACL.CentralAuth.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using WebModels = tms_template_net8.Models;
+using tms_template_net8.Models;
 using tms_template_net8.Services;
 
 namespace tms_template_net8.Controllers.Web;
@@ -14,12 +13,12 @@ namespace tms_template_net8.Controllers.Web;
 public class ACLCheckingController : Controller
 {
     public const string AclSessionKey = "AclCheckPassed";
+
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
     private readonly IACLService _aclService;
     private readonly IUserAccessControlService _accessControlService;
 
-    #region ACLCheckingController
     public ACLCheckingController(
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration,
@@ -31,9 +30,7 @@ public class ACLCheckingController : Controller
         _aclService = aclService;
         _accessControlService = accessControlService;
     }
-    #endregion
 
-    #region Index
     /// <summary>
     /// Entry URL from the external login app (canonical path), e.g.
     /// <c>https://host/ACLChecking/?ID_ACL_USER=7171&amp;auth-code=...</c>
@@ -103,11 +100,9 @@ public class ACLCheckingController : Controller
         ViewBag.IdAclUser = Request.Query["ID_ACL_USER"].ToString().Trim();
         return View();
     }
-    #endregion
 
-    #region Verify
     [HttpPost("verify")]
-    public async Task<IActionResult> Verify([FromBody] WebModels.AclTokenRequest? body)
+    public async Task<IActionResult> Verify([FromBody] AclTokenRequest? body)
     {
         await HttpContext.Session.LoadAsync(HttpContext.RequestAborted);
 
@@ -117,7 +112,7 @@ public class ACLCheckingController : Controller
         var verifyPath = _configuration["Auth:VerifyTokenUrl"]?.Trim();
         if (string.IsNullOrWhiteSpace(authBaseUrl) || string.IsNullOrWhiteSpace(verifyPath))
             return BadRequest(new { success = false, message = "Auth:VerifyTokenUrl is not configured", redirectUrl = (string?)null });
-        
+
         var verifyUrl = authBaseUrl.TrimEnd('/') + "/" + verifyPath.TrimStart('/');
 
         var verifyResult = await VerifyTokenExternalAsync(token, verifyUrl);
@@ -132,15 +127,13 @@ public class ACLCheckingController : Controller
             });
         }
 
-        // Prefer explicit ID from POST (survives missing/stale session cookie), then session.
         var idAclFromBody = body?.IdAclUser?.Trim();
         if (!string.IsNullOrEmpty(idAclFromBody))
             HttpContext.Session.SetString("ID_ACL_USER", idAclFromBody);
 
         var sessionAclUser = HttpContext.Session.GetString("ID_ACL_USER")?.Trim();
 
-        // Load full ACL snapshot (user + roles + accessControls) into session for page-level authorization.
-        WebModels.UserAclData? aclSnapshot = null;
+        UserAclData? aclSnapshot = null;
         if (!string.IsNullOrWhiteSpace(sessionAclUser))
         {
             aclSnapshot = await _accessControlService.LoadAndStoreAsync(HttpContext, sessionAclUser, token, HttpContext.RequestAborted);
@@ -171,9 +164,7 @@ public class ACLCheckingController : Controller
             accessLoaded = aclSnapshot != null
         });
     }
-    #endregion
 
-    #region LogoutPage
     /// <summary>
     /// Shows a full-page signing-out screen; the browser then POSTs to <see cref="Logout"/> to end the session.
     /// </summary>
@@ -189,9 +180,7 @@ public class ACLCheckingController : Controller
         ViewBag.LogoutPostUrl = Url.Action(nameof(Logout), "ACLChecking");
         return View();
     }
-    #endregion
 
-    #region Logout
     /// <summary>
     /// Ends the app session, clears all cookies, and returns a redirect URL for the browser.
     /// </summary>
@@ -212,9 +201,7 @@ public class ACLCheckingController : Controller
             redirectUrl
         });
     }
-    #endregion
 
-    #region ExchangeAuthCodeAsync
     private async Task<(bool Success, string? Message, string? AccessToken, string? RefreshToken)> ExchangeAuthCodeAsync(string authCode)
     {
         var baseUrl = _configuration["Auth:BaseUrl"]?.Trim();
@@ -261,9 +248,7 @@ public class ACLCheckingController : Controller
             return (false, $"Auth code exchange error: {ex.Message}", null, null);
         }
     }
-    #endregion
 
-    #region TryParseApiErrorMessage
     private static string? TryParseApiErrorMessage(string payload)
     {
         try
@@ -274,6 +259,10 @@ public class ACLCheckingController : Controller
                 return null;
             if (root.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String)
                 return m.GetString();
+            if (root.TryGetProperty("error_description", out var desc) && desc.ValueKind == JsonValueKind.String)
+                return desc.GetString();
+            if (root.TryGetProperty("error", out var err) && err.ValueKind == JsonValueKind.String)
+                return err.GetString();
             if (root.TryGetProperty("errors", out var errs) && errs.ValueKind == JsonValueKind.Array && errs.GetArrayLength() > 0)
             {
                 var first = errs[0];
@@ -288,9 +277,7 @@ public class ACLCheckingController : Controller
 
         return null;
     }
-    #endregion
 
-    #region VerifyTokenExternalAsync
     private async Task<(bool Success, string? Message, string? RedirectUrl)> VerifyTokenExternalAsync(string token, string verifyUrl)
     {
         try
@@ -306,150 +293,61 @@ public class ACLCheckingController : Controller
             if (response.IsSuccessStatusCode)
                 return (true, null, null);
 
-            string? message = null;
+            var message = TryParseApiErrorMessage(payload);
             string? redirectUrl = null;
-            try
-            {
-                using var doc = JsonDocument.Parse(payload);
-                var root = doc.RootElement;
-                if (root.TryGetProperty("message", out var msg))
-                    message = msg.GetString();
-                else if (root.TryGetProperty("error_description", out var desc))
-                    message = desc.GetString();
-                else if (root.TryGetProperty("error", out var err))
-                    message = err.GetString();
 
-                if (root.TryGetProperty("data", out var dataNode) && dataNode.ValueKind == JsonValueKind.Object)
-                {
-                    if (dataNode.TryGetProperty("redirectUrl", out var ru))
-                        redirectUrl = ru.GetString();
-                    else if (dataNode.TryGetProperty("RedirectUrl", out var ru2))
-                        redirectUrl = ru2.GetString();
-                }
-            }
-            catch
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("data", out var dataNode) && dataNode.ValueKind == JsonValueKind.Object)
             {
-                // keep fallback message
+                if (dataNode.TryGetProperty("redirectUrl", out var redirectUrlNode))
+                    redirectUrl = redirectUrlNode.GetString();
             }
 
             return (false, message ?? $"Verify API failed with status {(int)response.StatusCode}", redirectUrl);
+        }
+        catch (JsonException)
+        {
+            return (false, "Verify API returned an invalid JSON response.", null);
         }
         catch (Exception ex)
         {
             return (false, $"Verify API error: {ex.Message}", null);
         }
     }
-    #endregion
 
-    #region RetrieveUserDetail
     /// <summary>
     /// Loads display name (and id when present) from the Vasp ACL user API via <see cref="IACLService"/>.
     /// </summary>
-    private async Task<WebModels.UserDetail> RetrieveUserDetail(string? lookupUserId, string? bearerToken)
+    private async Task<UserDetail> RetrieveUserDetail(string? lookupUserId, string? bearerToken)
     {
         if (string.IsNullOrWhiteSpace(lookupUserId))
-            return new WebModels.UserDetail { UserId = lookupUserId, EmpName = lookupUserId };
+            return new UserDetail { UserId = lookupUserId, EmpName = lookupUserId };
 
         try
         {
             var payload = await _aclService.GetUserByIdAsync(lookupUserId, bearerToken, HttpContext.RequestAborted).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(payload))
-            {
-                return new WebModels.UserDetail { UserId = lookupUserId, EmpName = lookupUserId };
-            }
+                return new UserDetail { UserId = lookupUserId, EmpName = lookupUserId };
 
-            var displayName = TryParseDisplayNameFromAclUserPayload(payload);
-            var idFromPayload = TryParseUserIdFromAclUserPayload(payload);
-
-            return new WebModels.UserDetail
-            {
-                UserId = idFromPayload ?? lookupUserId,
-                EmpName = displayName ?? lookupUserId
-            };
-        }
-        catch (Exception ex)
-        {
-            return new WebModels.UserDetail { UserId = lookupUserId, EmpName = lookupUserId };
-        }
-    }
-    #endregion
-
-    #region TryParseDisplayNameFromAclUserPayload
-    private static string? TryParseDisplayNameFromAclUserPayload(string payload)
-    {
-        try
-        {
             using var doc = JsonDocument.Parse(payload);
-            var root = doc.RootElement;
-            if (root.ValueKind == JsonValueKind.String)
-                return root.GetString();
+            var userJson = doc.RootElement;
+            if (userJson.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
+                userJson = data;
 
-            if (root.ValueKind != JsonValueKind.Object)
-                return null;
+            var user = JsonSerializer.Deserialize<UserDetail>(
+                userJson.GetRawText(),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-            var target = root;
-            if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
-                target = data;
-
-            return JsonStringOrNumber(target,
-                "empName", "EmpName", "EMP_NAME", "emp_name", "Emp_Name",
-                "employeeName", "EmployeeName", "employee_name",
-                "userName", "UserName", "username", "Username",
-                "fullName", "FullName", "full_name",
-                "displayName", "DisplayName", "display_name",
-                "name", "Name",
-                "user_name", "User_Name");
+            return new UserDetail
+            {
+                UserId = user?.UserId ?? lookupUserId,
+                EmpName = user?.EmpName ?? lookupUserId
+            };
         }
         catch
         {
-            var t = payload.Trim();
-            return string.IsNullOrEmpty(t) ? null : t;
+            return new UserDetail { UserId = lookupUserId, EmpName = lookupUserId };
         }
     }
-    #endregion
-
-    #region TryParseUserIdFromAclUserPayload
-    private static string? TryParseUserIdFromAclUserPayload(string payload)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(payload);
-            var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object)
-                return null;
-
-            var target = root;
-            if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
-                target = data;
-
-            return JsonStringOrNumber(target, "id", "Id", "userId", "UserId");
-        }
-        catch
-        {
-            return null;
-        }
-    }
-    #endregion
-
-    #region JsonStringOrNumber
-    private static string? JsonStringOrNumber(JsonElement target, params string[] propertyNames)
-    {
-        if (target.ValueKind != JsonValueKind.Object)
-            return null;
-        foreach (var name in propertyNames)
-        {
-            if (!target.TryGetProperty(name, out var prop))
-                continue;
-            return prop.ValueKind switch
-            {
-                JsonValueKind.String => prop.GetString(),
-                JsonValueKind.Number => prop.ToString(),
-                JsonValueKind.True => "true",
-                JsonValueKind.False => "false",
-                _ => null
-            };
-        }
-        return null;
-    }
-    #endregion
 }
