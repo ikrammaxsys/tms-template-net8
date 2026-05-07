@@ -58,8 +58,6 @@ app.Use((ctx, next) =>
     return Task.CompletedTask;
 });
 
-app.UseAuthentication();
-app.UseAuthorization();
 app.UseAccessTokenValidation();
 
 app.MapControllerRoute(

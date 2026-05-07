@@ -1,9 +1,9 @@
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using tms_template_net8.Tokens;
 using WebModels = tms_template_net8.Models;
 
 namespace tms_template_net8.Controllers.Web;
@@ -14,14 +14,17 @@ public class ACLCheckingController : Controller
     public const string AclSessionKey = "AclCheckPassed";
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
+    private readonly ITokenService _tokenService;
 
     #region ACLCheckingController
     public ACLCheckingController(
         IHttpClientFactory httpClientFactory,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        ITokenService tokenService)
     {
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
+        _tokenService = tokenService;
     }
     #endregion
 
@@ -114,24 +117,9 @@ public class ACLCheckingController : Controller
         if (string.IsNullOrWhiteSpace(token))
             return BadRequest(new { success = false, message = "Access token is missing.", redirectUrl = (string?)null });
 
-        var authBaseUrl = _configuration["Auth:BaseUrl"]?.Trim();
-        var verifyPath = _configuration["Auth:VerifyTokenUrl"]?.Trim();
-        if (string.IsNullOrWhiteSpace(authBaseUrl) || string.IsNullOrWhiteSpace(verifyPath))
-            return BadRequest(new { success = false, message = "Auth:VerifyTokenUrl is not configured", redirectUrl = (string?)null });
-        
-        var verifyUrl = authBaseUrl.TrimEnd('/') + "/" + verifyPath.TrimStart('/');
-
-        var verifyResult = await VerifyTokenExternalAsync(token, verifyUrl);
-        if (!verifyResult.Success)
-        {
-            // Always include redirectUrl, even if null
-            return BadRequest(new
-            {
-                success = false,
-                message = verifyResult.Message ?? "invalid_token",
-                redirectUrl = SafeRedirectUrlOrNull(verifyResult.RedirectUrl)
-            });
-        }
+        var (_, tokenKind) = _tokenService.ValidateTokenWithKind(token);
+        if (tokenKind != AuthTokenValidationKind.Valid)
+            return BadRequest(new { success = false, message = tokenKind == AuthTokenValidationKind.Expired ? "token_expired" : "invalid_token", redirectUrl = (string?)null });
 
         // Prefer explicit ID from POST (survives missing/stale session cookie), then session.
         var idAclFromBody = body?.IdAclUser?.Trim();
@@ -272,38 +260,6 @@ public class ACLCheckingController : Controller
     }
     #endregion
 
-    #region SafeRedirectUrlOrNull
-    private string? SafeRedirectUrlOrNull(string? redirectUrl)
-    {
-        if (string.IsNullOrWhiteSpace(redirectUrl))
-            return null;
-
-        if (Uri.TryCreate(redirectUrl, UriKind.Relative, out var relativeUri))
-        {
-            var value = relativeUri.ToString();
-            if (value.StartsWith("/", StringComparison.Ordinal) && !value.StartsWith("//", StringComparison.Ordinal))
-                return value;
-        }
-
-        if (!Uri.TryCreate(redirectUrl, UriKind.Absolute, out var target))
-            return null;
-
-        if (Uri.TryCreate($"{Request.Scheme}://{Request.Host}", UriKind.Absolute, out var current)
-            && Uri.Compare(target, current, UriComponents.SchemeAndServer, UriFormat.SafeUnescaped, StringComparison.OrdinalIgnoreCase) == 0)
-            return target.ToString();
-
-        foreach (var configKey in new[] { "Vasp:BaseUrl", "Auth:BaseUrl" })
-        {
-            var configured = _configuration[configKey]?.Trim();
-            if (Uri.TryCreate(configured, UriKind.Absolute, out var allowed)
-                && Uri.Compare(target, allowed, UriComponents.SchemeAndServer, UriFormat.SafeUnescaped, StringComparison.OrdinalIgnoreCase) == 0)
-                return target.ToString();
-        }
-
-        return null;
-    }
-    #endregion
-
     #region TryParseApiErrorMessage
     private static string? TryParseApiErrorMessage(string payload)
     {
@@ -328,57 +284,6 @@ public class ACLCheckingController : Controller
         }
 
         return null;
-    }
-    #endregion
-
-    #region VerifyTokenExternalAsync
-    private async Task<(bool Success, string? Message, string? RedirectUrl)> VerifyTokenExternalAsync(string token, string verifyUrl)
-    {
-        try
-        {
-            var client = _httpClientFactory.CreateClient();
-            using var request = new HttpRequestMessage(HttpMethod.Get, verifyUrl);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            request.Headers.Accept.ParseAdd("application/json");
-
-            using var response = await client.SendAsync(request);
-            var payload = await response.Content.ReadAsStringAsync();
-
-            if (response.IsSuccessStatusCode)
-                return (true, null, null);
-
-            string? message = null;
-            string? redirectUrl = null;
-            try
-            {
-                using var doc = JsonDocument.Parse(payload);
-                var root = doc.RootElement;
-                if (root.TryGetProperty("message", out var msg))
-                    message = msg.GetString();
-                else if (root.TryGetProperty("error_description", out var desc))
-                    message = desc.GetString();
-                else if (root.TryGetProperty("error", out var err))
-                    message = err.GetString();
-
-                if (root.TryGetProperty("data", out var dataNode) && dataNode.ValueKind == JsonValueKind.Object)
-                {
-                    if (dataNode.TryGetProperty("redirectUrl", out var ru))
-                        redirectUrl = ru.GetString();
-                    else if (dataNode.TryGetProperty("RedirectUrl", out var ru2))
-                        redirectUrl = ru2.GetString();
-                }
-            }
-            catch
-            {
-                // keep fallback message
-            }
-
-            return (false, message ?? $"Verify API failed with status {(int)response.StatusCode}", redirectUrl);
-        }
-        catch
-        {
-            return (false, "Verify API error.", null);
-        }
     }
     #endregion
 
