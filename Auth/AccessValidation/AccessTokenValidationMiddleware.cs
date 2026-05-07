@@ -89,6 +89,7 @@ public sealed class AccessTokenValidationMiddleware
         return path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase)
             || path.StartsWithSegments("/ACLChecking", StringComparison.OrdinalIgnoreCase)
             || path.StartsWithSegments("/Home/SessionExpired", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWithSegments("/Home/AccessDenied", StringComparison.OrdinalIgnoreCase)
             || path.StartsWithSegments("/Login", StringComparison.OrdinalIgnoreCase);
     }
 }

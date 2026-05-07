@@ -20,6 +20,7 @@ builder.Services.AddHttpClient("Vasp", (sp, client) =>
 });
 builder.Services.AddScoped<IAuthTokenRefreshService, AuthTokenRefreshService>();
 builder.Services.AddScoped<IACLService, ACLService>();
+builder.Services.AddScoped<IUserAccessControlService, UserAccessControlService>();
 builder.Services.AddTmsWebAppSdk(builder.Configuration, opts =>
 {
     // Optional: override options after binding from configuration
