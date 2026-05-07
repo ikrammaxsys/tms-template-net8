@@ -1,5 +1,6 @@
 using tms_template_net8.Jwt;
 using tms_template_net8.Services;
+using TMS.WebApp.Sdk.DependencyInjection;
 using tms_template_net8.AccessValidation;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -19,6 +20,11 @@ builder.Services.AddHttpClient("Vasp", (sp, client) =>
 });
 builder.Services.AddScoped<IAuthTokenRefreshService, AuthTokenRefreshService>();
 builder.Services.AddScoped<IACLService, ACLService>();
+builder.Services.AddScoped<IUserAccessControlService, UserAccessControlService>();
+builder.Services.AddTmsWebAppSdk(builder.Configuration, opts =>
+{
+    // Optional: override options after binding from configuration
+});
 builder.Services.AddScoped<ICoreAPIService, CoreAPIService>();
 
 // register module for app specific services
