@@ -20,22 +20,27 @@ This template gives a ready-to-use shell (sidebar, topbar, session handling, ACL
 ## What Is Inside
 
 - `Program.cs`
-  - Service registration
-  - HTTP client setup for ACL and Core API calls
-  - Authentication + authorization middleware setup
-  - ACL bootstrap redirect (`/` -> `/ACLChecking`)
-- `Auth/`
-  - JWT key loading and validation services
-  - Access-token validation middleware
-  - Token refresh service hooks
-- `Controllers/ACLCheckingController.cs`
+  - Thin bootstrap. All DI is delegated to two extension methods:
+    `services.AddAuthAndAcl(...)` (auth + ACL gate + Vasp HttpClient)
+    and `services.AddAppServices()` (template/business services).
+  - Pipeline composes the ACL bootstrap redirect (`/` → `/ACLChecking`)
+    and the access-token validation middleware.
+- `Jwt/`, `Tokens/`, `AccessControl/`, `AccessValidation/`
+  - JWT key loading (`RsaKeyLoader`) and validation (`TokenService`)
+  - Access-token validation middleware (`AccessTokenValidationMiddleware`)
+  - Token refresh service (`AuthTokenRefreshService`)
+  - Page-level access control (`RequirePageAccessAttribute` + `PageAccessAuthorizationFilter`)
+  - Strongly-typed config: `JwtOptions` and `AuthOptions` bound from `appsettings.json`.
+  - All registered in one place via `services.AddAuthAndAcl(...)`.
+- `Controllers/Web/ACLCheckingController.cs`
   - Entry point for ACL callback/query parameters
   - Auth code exchange flow
-  - Token verification flow
-  - Session population (`gstrUserID`, `gstrUserName`)
+  - Token verification flow (loads roles + access controls into session)
+  - Session population (`gstrUserID`, `gstrUserName`, `UserAclData`)
   - Logout and session cleanup flow
 - `Services/`
-  - `ACLService`: VASP/ACL user lookup
+  - `ServiceCollectionExtensions.AddAppServices()`: registers the services below
+  - `ACLService`: VASP/ACL user lookup (template scaffolding example)
   - `CoreAPIService`: sample call to TMS Core API (`/api/v1/status`)
   - `ProductService`: in-memory sample CRUD service
 - `Controllers/Web` and `Controllers/Api`
@@ -63,29 +68,31 @@ This template gives a ready-to-use shell (sidebar, topbar, session handling, ACL
 
 ## Configuration
 
-Primary runtime settings are in `appsettings.json`:
+Primary runtime settings are in `appsettings.json`. The `Jwt` and `Auth` sections
+are bound to strongly-typed `JwtOptions` and `AuthOptions` (defaults shown in
+parentheses; defaults are baked into the option classes so missing keys are fine):
 
-- `Jwt`
-  - `RsaKeyPath`
-  - `Issuer`
-  - `Audience`
-- `Auth`
-  - `BaseUrl`
-  - `VerifyTokenUrl`
-  - `ExchangeAuthCodeUrl`
-  - `RefreshTokenApiUrl`
-  - `LogoutApiUrl`
+- `Jwt` → `JwtOptions`
+  - `RsaKeyPath` — required
+  - `Issuer` (`"authapi"`)
+  - `Audience` (`"authapi-client"`)
+- `Auth` → `AuthOptions`
+  - `BaseUrl` — base URL of the auth API
+  - `ExchangeAuthCodeUrl` — path or absolute URL for the auth-code exchange
+  - `RefreshTokenApiUrl` (`"/api/auth/refresh-token"`)
+  - `LogoutApiUrl` — informational
   - `UserRolesAndAccessUrl` — endpoint that returns `{ data: { user, roles, accessControls } }` for the page-access filter. Supports `{idAclUser}` placeholder, e.g. `/api/users/{idAclUser}/roles-and-access`. May be a path (combined with `BaseUrl`) or an absolute URL.
-  - `AccessTokenStorageKey`
-  - `RefreshTokenStorageKey`
+  - `AccessTokenStorageKey` (`"authacl_access_token"`)
+  - `RefreshTokenStorageKey` (`"authacl_refresh_token"`)
+  - `RefreshTokenRequestUsesGrantType` (`false`) — when true, refresh body is `{ grantType, refreshToken }`; otherwise `{ refreshToken }`
 - `Vasp`
-  - `BaseUrl` (ACL/VASP UI base URL)
+  - `BaseUrl` (ACL/VASP UI base URL — used by the named `Vasp` HttpClient)
 - `UiFoundation`
   - `BaseUrl` (TMS UI web component loader base URL)
 - `CoreApi`
   - `BaseUrl` (TMS Core API base URL)
 
-Optional/used by views:
+Optional/used by views and middleware:
 
 - `App:SystemName` for title/footer branding
 - `App:BaseUrl` for base-path aware redirects in middleware (if app is mounted under sub-path)
@@ -118,7 +125,7 @@ Use `ProductManagement` as the reference implementation.
 - Create model(s) in `Models/<Module>/`
 - Add service interface in `Services/Interfaces/`
 - Implement service in `Services/`
-- Register service in `Program.cs`
+- Register service in `Services/ServiceCollectionExtensions.cs` inside `AddAppServices(...)` (avoid touching `Program.cs` for normal modules)
 
 ### 2) Add API endpoints
 
@@ -172,7 +179,7 @@ These are loaded via the UI Foundation loader script in `Views/Shared/_Layout.cs
 For additional TMS common modules, follow the same pattern:
 
 1. Add package reference in `.csproj`
-2. Register required services in `Program.cs`
+2. Register required services in `Services/ServiceCollectionExtensions.cs` (`AddAppServices`)
 3. Wrap usage behind project-local service interfaces in `Services/Interfaces`
 
 ### TMS Core API
@@ -184,16 +191,17 @@ Configure `CoreApi:BaseUrl` and add new methods following `GetStatusAsync`.
 
 ACL V2 behavior is implemented by:
 
-- `ACLCheckingController`
-- `AccessTokenValidationMiddleware`
-- JWT service registration in `AuthServiceExtensions`
-- Token refresh service (`AuthTokenRefreshService`)
+- `ACLCheckingController` — gate page, auth-code exchange, verify, logout
+- `AccessTokenValidationMiddleware` — per-request token check + refresh
+- `AuthTokenRefreshService` — calls the refresh endpoint
+- `UserAccessControlService` — loads roles + access controls into session
+- All wired together in one place: `services.AddAuthAndAcl(...)` (see `Jwt/AuthServiceExtensions.cs`)
 
 If your ACL endpoints or payload contracts differ, update:
 
-- `Auth` section values
-- `ACLCheckingController` parsing/mapping logic
-- `IACLService`/`ACLService` request paths
+- `Auth` section values in `appsettings.json` (bound to `AuthOptions`)
+- `ACLCheckingController.ExchangeAuthCodeAsync` parsing logic
+- `UserAccessControlService.ParsePayload` if the roles/access envelope differs
 
 ### Page-Level Access Control
 

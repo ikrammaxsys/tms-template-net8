@@ -1,6 +1,7 @@
-using tms_template_net8.Tokens;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
+using tms_template_net8.Tokens;
 
 namespace tms_template_net8.AccessValidation;
 
@@ -21,6 +22,7 @@ public sealed class AccessTokenValidationMiddleware
         HttpContext context,
         ITokenService tokenService,
         IAuthTokenRefreshService refreshService,
+        IOptions<AuthOptions> authOptions,
         IConfiguration configuration)
     {
         if (ShouldSkipTokenCheck(context.Request.Path))
@@ -29,8 +31,9 @@ public sealed class AccessTokenValidationMiddleware
             return;
         }
 
-        var tokenKey = configuration["Auth:AccessTokenStorageKey"] ?? "authacl_access_token";
-        var refreshKey = configuration["Auth:RefreshTokenStorageKey"] ?? "authacl_refresh_token";
+        var auth = authOptions.Value;
+        var tokenKey = auth.AccessTokenStorageKey;
+        var refreshKey = auth.RefreshTokenStorageKey;
         var token = context.Request.Cookies[tokenKey];
         var appBaseUrl = configuration["App:BaseUrl"] ?? "";
 

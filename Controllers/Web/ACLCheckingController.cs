@@ -3,6 +3,9 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
+using tms_template_net8.AccessValidation;
+using tms_template_net8.Services;
 using tms_template_net8.Tokens;
 using WebModels = tms_template_net8.Models;
 
@@ -15,20 +18,23 @@ public class ACLCheckingController : Controller
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
     private readonly ITokenService _tokenService;
+    private readonly IUserAccessControlService _userAccessControlService;
+    private readonly AuthOptions _auth;
 
-    #region ACLCheckingController
     public ACLCheckingController(
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration,
-        ITokenService tokenService)
+        ITokenService tokenService,
+        IUserAccessControlService userAccessControlService,
+        IOptions<AuthOptions> authOptions)
     {
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
         _tokenService = tokenService;
+        _userAccessControlService = userAccessControlService;
+        _auth = authOptions.Value;
     }
-    #endregion
 
-    #region Index
     /// <summary>
     /// Entry URL from the external login app (canonical path), e.g.
     /// <c>https://host/ACLChecking/?ID_ACL_USER=7171&amp;auth-code=...</c>
@@ -41,8 +47,8 @@ public class ACLCheckingController : Controller
     [HttpGet]
     public async Task<IActionResult> Index()
     {
-        var tokenKey = _configuration["Auth:AccessTokenStorageKey"] ?? "authacl_access_token";
-        var refreshKey = _configuration["Auth:RefreshTokenStorageKey"] ?? "authacl_refresh_token";
+        var tokenKey = _auth.AccessTokenStorageKey;
+        var refreshKey = _auth.RefreshTokenStorageKey;
         var cookieOptions = CreateAuthCookieOptions(Request);
 
         var idAclUser = Request.Query["ID_ACL_USER"].ToString().Trim();
@@ -60,57 +66,30 @@ public class ACLCheckingController : Controller
                 return View();
             }
 
-            Response.Cookies.Delete(tokenKey, cookieOptions);
-            Response.Cookies.Append(tokenKey, exchanged.AccessToken!, cookieOptions);
-            Response.Cookies.Delete(refreshKey, cookieOptions);
-            Response.Cookies.Append(refreshKey, exchanged.RefreshToken!, cookieOptions);
-
-            var qb = new QueryBuilder();
-            foreach (var kv in Request.Query)
-            {
-                if (string.Equals(kv.Key, "auth-code", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(kv.Key, "access_token", StringComparison.OrdinalIgnoreCase))
-                    continue;
-                foreach (var v in kv.Value)
-                    qb.Add(kv.Key, v ?? string.Empty);
-            }
-
-            return LocalRedirect((Request.PathBase + Request.Path + qb.ToQueryString()));
+            ReplaceCookie(tokenKey, exchanged.AccessToken!, cookieOptions);
+            ReplaceCookie(refreshKey, exchanged.RefreshToken!, cookieOptions);
+            return LocalRedirect(Request.PathBase + Request.Path + BuildRedirectQueryWithout("auth-code", "access_token"));
         }
-
-        var token = Request.Query["access_token"].ToString();
 
         // One canonical cookie at Path=/ (replace). Avoids duplicate cookies when an older
         // cookie was issued with different options/path so ContainsKey missed it.
-        if (!string.IsNullOrWhiteSpace(token))
+        var queryToken = Request.Query["access_token"].ToString();
+        if (!string.IsNullOrWhiteSpace(queryToken))
         {
-            Response.Cookies.Delete(tokenKey, cookieOptions);
-            Response.Cookies.Append(tokenKey, token, cookieOptions);
-
-            var qb = new QueryBuilder();
-            foreach (var kv in Request.Query)
-            {
-                if (string.Equals(kv.Key, "access_token", StringComparison.OrdinalIgnoreCase))
-                    continue;
-                foreach (var v in kv.Value)
-                    qb.Add(kv.Key, v ?? string.Empty);
-            }
-
-            return LocalRedirect(Request.PathBase + Request.Path + qb.ToQueryString());
+            ReplaceCookie(tokenKey, queryToken, cookieOptions);
+            return LocalRedirect(Request.PathBase + Request.Path + BuildRedirectQueryWithout("access_token"));
         }
 
         ViewBag.IdAclUser = Request.Query["ID_ACL_USER"].ToString().Trim();
         return View();
     }
-    #endregion
 
-    #region Verify
     [HttpPost("verify")]
     public async Task<IActionResult> Verify([FromBody] WebModels.AclTokenRequest? body)
     {
         await HttpContext.Session.LoadAsync(HttpContext.RequestAborted);
 
-        var tokenKey = _configuration["Auth:AccessTokenStorageKey"] ?? "authacl_access_token";
+        var tokenKey = _auth.AccessTokenStorageKey;
         var token = body?.Token?.Trim();
         if (string.IsNullOrWhiteSpace(token))
             token = Request.Cookies[tokenKey]?.Trim();
@@ -128,6 +107,11 @@ public class ACLCheckingController : Controller
 
         var sessionAclUser = HttpContext.Session.GetString("ID_ACL_USER")?.Trim();
         var sessionUserId = sessionAclUser ?? string.Empty;
+
+        // Load roles + access-control snapshot into session for [RequirePageAccess].
+        // Failure is non-fatal: the user can still hit pages without the attribute.
+        if (!string.IsNullOrEmpty(sessionUserId))
+            await _userAccessControlService.LoadAndStoreAsync(HttpContext, sessionUserId, token, HttpContext.RequestAborted);
 
         HttpContext.Session.SetString(AclSessionKey, "1");
         HttpContext.Session.SetString("gstrUserID", sessionUserId);
@@ -148,9 +132,7 @@ public class ACLCheckingController : Controller
             userName = sessionUserId
         });
     }
-    #endregion
 
-    #region LogoutPage
     /// <summary>
     /// Shows a full-page signing-out screen; the browser then POSTs to <see cref="Logout"/> to end the session.
     /// </summary>
@@ -161,14 +143,12 @@ public class ACLCheckingController : Controller
         if (string.IsNullOrEmpty(vaspBaseUrl))
             vaspBaseUrl = "/";
 
-        ViewBag.TokenKey = _configuration["Auth:AccessTokenStorageKey"] ?? "authacl_access_token";
+        ViewBag.TokenKey = _auth.AccessTokenStorageKey;
         ViewBag.VaspBaseUrl = vaspBaseUrl;
         ViewBag.LogoutPostUrl = Url.Action(nameof(Logout), "ACLChecking");
         return View();
     }
-    #endregion
 
-    #region Logout
     /// <summary>
     /// Ends the app session, clears all cookies, and returns a redirect URL for the browser.
     /// </summary>
@@ -177,8 +157,8 @@ public class ACLCheckingController : Controller
     {
         HttpContext.Session.Clear();
 
-        var tokenKey = _configuration["Auth:AccessTokenStorageKey"] ?? "authacl_access_token";
-        var refreshKey = _configuration["Auth:RefreshTokenStorageKey"] ?? "authacl_refresh_token";
+        var tokenKey = _auth.AccessTokenStorageKey;
+        var refreshKey = _auth.RefreshTokenStorageKey;
         var cookieOptions = CreateAuthCookieOptions(Request);
         Response.Cookies.Delete(tokenKey, cookieOptions);
         Response.Cookies.Delete(refreshKey, cookieOptions);
@@ -192,16 +172,14 @@ public class ACLCheckingController : Controller
             redirectUrl
         });
     }
-    #endregion
 
-    #region ExchangeAuthCodeAsync
     private async Task<(bool Success, string? Message, string? AccessToken, string? RefreshToken)> ExchangeAuthCodeAsync(string authCode)
     {
-        var baseUrl = _configuration["Auth:BaseUrl"]?.Trim();
+        var baseUrl = _auth.BaseUrl?.Trim();
         if (string.IsNullOrWhiteSpace(baseUrl))
             return (false, "Auth service URL is not configured.", null, null);
 
-        var exchangePath = _configuration["Auth:ExchangeAuthCodeUrl"]?.Trim();
+        var exchangePath = _auth.ExchangeAuthCodeUrl?.Trim();
         if (string.IsNullOrWhiteSpace(exchangePath))
             return (false, "Auth code exchange endpoint is not configured.", null, null);
 
@@ -245,9 +223,7 @@ public class ACLCheckingController : Controller
             return (false, "Auth code exchange error.", null, null);
         }
     }
-    #endregion
 
-    #region CreateAuthCookieOptions
     private static CookieOptions CreateAuthCookieOptions(HttpRequest request)
     {
         return new CookieOptions
@@ -258,9 +234,30 @@ public class ACLCheckingController : Controller
             SameSite = SameSiteMode.Lax,
         };
     }
-    #endregion
 
-    #region TryParseApiErrorMessage
+    private void ReplaceCookie(string name, string value, CookieOptions options)
+    {
+        Response.Cookies.Delete(name, options);
+        Response.Cookies.Append(name, value, options);
+    }
+
+    /// <summary>
+    /// Rebuilds the current request's query string with the named keys removed (case-insensitive).
+    /// Used to strip <c>auth-code</c> / <c>access_token</c> from the URL after they're consumed.
+    /// </summary>
+    private string BuildRedirectQueryWithout(params string[] excludedKeys)
+    {
+        var qb = new QueryBuilder();
+        foreach (var kv in Request.Query)
+        {
+            if (excludedKeys.Any(k => string.Equals(kv.Key, k, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            foreach (var v in kv.Value)
+                qb.Add(kv.Key, v ?? string.Empty);
+        }
+        return qb.ToQueryString().ToString();
+    }
+
     private static string? TryParseApiErrorMessage(string payload)
     {
         try
@@ -285,6 +282,4 @@ public class ACLCheckingController : Controller
 
         return null;
     }
-    #endregion
-
 }

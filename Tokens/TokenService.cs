@@ -1,8 +1,9 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.Extensions.Configuration;
+using tms_template_net8.Jwt;
 
 namespace tms_template_net8.Tokens;
 
@@ -11,27 +12,13 @@ namespace tms_template_net8.Tokens;
 /// </summary>
 public class TokenService : ITokenService
 {
-    private readonly IConfiguration _config;
     private readonly RSA _rsa;
+    private readonly JwtOptions _jwt;
 
-    private readonly string _issuer;
-    private readonly string _audience;
-
-    public TokenService(IConfiguration config, RSA rsa)
+    public TokenService(RSA rsa, IOptions<JwtOptions> jwtOptions)
     {
-        _config = config;
         _rsa = rsa;
-
-        _issuer = _config["Jwt:Issuer"] ?? "authapi";
-        _audience = _config["Jwt:Audience"] ?? "authapi-client";
-    }
-
-    public (ClaimsPrincipal? principal, string? error) ValidateToken(string token)
-    {
-        var (principal, kind) = ValidateTokenWithKind(token);
-        if (kind == AuthTokenValidationKind.Valid)
-            return (principal, null);
-        return (null, kind == AuthTokenValidationKind.Expired ? "token_expired" : "invalid_token");
+        _jwt = jwtOptions.Value;
     }
 
     public (ClaimsPrincipal? principal, AuthTokenValidationKind kind) ValidateTokenWithKind(string token)
@@ -39,8 +26,7 @@ public class TokenService : ITokenService
         try
         {
             var handler = new JwtSecurityTokenHandler();
-            var validationParams = GetValidationParameters();
-            var principal = handler.ValidateToken(token, validationParams, out var validatedToken);
+            var principal = handler.ValidateToken(token, GetValidationParameters(), out var validatedToken);
             if (validatedToken is not JwtSecurityToken)
                 return (null, AuthTokenValidationKind.Invalid);
 
@@ -62,13 +48,12 @@ public class TokenService : ITokenService
 
     private TokenValidationParameters GetValidationParameters()
     {
-        var key = new RsaSecurityKey(_rsa);
         return new TokenValidationParameters
         {
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = key,
-            ValidIssuer = _issuer,
-            ValidAudience = _audience,
+            IssuerSigningKey = new RsaSecurityKey(_rsa),
+            ValidIssuer = _jwt.Issuer,
+            ValidAudience = _jwt.Audience,
             ValidateIssuer = true,
             ValidateAudience = true,
             ValidateLifetime = true,

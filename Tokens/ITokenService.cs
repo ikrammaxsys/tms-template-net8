@@ -7,8 +7,6 @@ namespace tms_template_net8.Tokens;
 /// </summary>
 public interface ITokenService
 {
-    (ClaimsPrincipal? principal, string? error) ValidateToken(string token);
-
     /// <summary>
     /// Validates the access token and distinguishes expiry from other failures (bad signature, wrong issuer, etc.).
     /// </summary>

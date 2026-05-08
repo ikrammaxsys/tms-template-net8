@@ -5,7 +5,7 @@ using Microsoft.Data.SqlClient;
 using TMS.WebApp.Sdk.Data.Sql;
 using tms_template_net8.Models;
 
-namespace tms_template_net8.Controllers;
+namespace tms_template_net8.Controllers.Web;
 
 public class HomeController : Controller
 {

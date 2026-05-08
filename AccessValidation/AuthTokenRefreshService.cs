@@ -1,24 +1,24 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace tms_template_net8.AccessValidation;
 
 public sealed class AuthTokenRefreshService : IAuthTokenRefreshService
 {
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly IConfiguration _configuration;
+    private readonly AuthOptions _auth;
     private readonly ILogger<AuthTokenRefreshService> _logger;
 
     public AuthTokenRefreshService(
         IHttpClientFactory httpClientFactory,
-        IConfiguration configuration,
+        IOptions<AuthOptions> authOptions,
         ILogger<AuthTokenRefreshService> logger)
     {
         _httpClientFactory = httpClientFactory;
-        _configuration = configuration;
+        _auth = authOptions.Value;
         _logger = logger;
     }
 
@@ -27,8 +27,8 @@ public sealed class AuthTokenRefreshService : IAuthTokenRefreshService
         if (string.IsNullOrWhiteSpace(refreshToken))
             return null;
 
-        var baseUrl = _configuration["Auth:BaseUrl"]?.Trim();
-        var path = _configuration["Auth:RefreshTokenApiUrl"]?.Trim() ?? "/api/auth/refresh-token";
+        var baseUrl = _auth.BaseUrl?.Trim();
+        var path = string.IsNullOrWhiteSpace(_auth.RefreshTokenApiUrl) ? "/api/auth/refresh-token" : _auth.RefreshTokenApiUrl.Trim();
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
             _logger.LogWarning("Auth token refresh skipped: Auth:BaseUrl is not configured.");
@@ -77,8 +77,7 @@ public sealed class AuthTokenRefreshService : IAuthTokenRefreshService
 
     private string BuildRequestBody(string refreshToken)
     {
-        var useGrantType = _configuration.GetValue("Auth:RefreshTokenRequestUsesGrantType", false);
-        if (useGrantType)
+        if (_auth.RefreshTokenRequestUsesGrantType)
         {
             return JsonSerializer.Serialize(new
             {
