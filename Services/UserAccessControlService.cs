@@ -9,7 +9,6 @@ namespace tms_template_net8.Services;
 public sealed class UserAccessControlService : IUserAccessControlService
 {
     public const string DefaultSessionKey = "UserAclData";
-    private const string IdAclUserPlaceholder = "{idAclUser}";
 
     private static readonly JsonSerializerOptions SerializeOptions = new()
     {
@@ -36,23 +35,15 @@ public sealed class UserAccessControlService : IUserAccessControlService
         if (string.IsNullOrWhiteSpace(idAclUser))
             return null;
 
-        var url = BuildUserRolesUrl(idAclUser);
-        if (url == null)
-        {
-            _logger.LogWarning("ACL load skipped: Auth:BaseUrl or Auth:UserRolesAndAccessUrl is not configured.");
-            return null;
-        }
-
         try
         {
             var client = _httpClientFactory.CreateClient();
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Accept.ParseAdd("application/json");
+            client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
             if (!string.IsNullOrWhiteSpace(bearerToken))
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken.Trim());
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken.Trim());
 
-            using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
-            var payload = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            var url = $"{_auth.BaseUrl}/api/users/{Uri.EscapeDataString(idAclUser)}/roles-and-access";
+            using var response = await client.GetAsync(url, cancellationToken).ConfigureAwait(false);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -60,7 +51,8 @@ public sealed class UserAccessControlService : IUserAccessControlService
                 return null;
             }
 
-            var data = ParsePayload(payload);
+            var payload = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            var data = JsonSerializer.Deserialize<AclApiResponse>(payload, SerializeOptions)?.Data;
             if (data == null)
                 return null;
 
@@ -112,54 +104,8 @@ public sealed class UserAccessControlService : IUserAccessControlService
         context.Session.Remove(DefaultSessionKey);
     }
 
-    /// <summary>
-    /// Builds the target URL for the roles-and-access endpoint. Supports both an absolute
-    /// URL in <c>Auth:UserRolesAndAccessUrl</c> and a relative path combined with <c>Auth:BaseUrl</c>,
-    /// and substitutes the <c>{idAclUser}</c> placeholder when present.
-    /// </summary>
-    private string? BuildUserRolesUrl(string idAclUser)
+    private sealed class AclApiResponse
     {
-        var template = _auth.UserRolesAndAccessUrl?.Trim();
-        if (string.IsNullOrWhiteSpace(template))
-            return null;
-
-        var withId = template.Replace(IdAclUserPlaceholder, Uri.EscapeDataString(idAclUser), StringComparison.OrdinalIgnoreCase);
-        if (Uri.TryCreate(withId, UriKind.Absolute, out _))
-            return withId;
-
-        var baseUrl = _auth.BaseUrl?.Trim();
-        if (string.IsNullOrWhiteSpace(baseUrl))
-            return null;
-
-        return baseUrl.TrimEnd('/') + "/" + withId.TrimStart('/');
-    }
-
-    private static UserAclData? ParsePayload(string payload)
-    {
-        if (string.IsNullOrWhiteSpace(payload))
-            return null;
-
-        using var doc = JsonDocument.Parse(payload);
-        var root = doc.RootElement;
-        if (root.ValueKind != JsonValueKind.Object)
-            return null;
-
-        var dataNode = root;
-        if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
-            dataNode = data;
-        else if (!root.TryGetProperty("accessControls", out _))
-            return null;
-
-        var parsed = JsonSerializer.Deserialize<UserAclData>(dataNode.GetRawText(), SerializeOptions);
-        if (parsed == null)
-            return null;
-
-        // Force case-insensitive lookups regardless of how System.Text.Json built the dictionary.
-        if (parsed.AccessControls.Comparer != StringComparer.OrdinalIgnoreCase)
-        {
-            parsed.AccessControls = new Dictionary<string, List<string>>(parsed.AccessControls, StringComparer.OrdinalIgnoreCase);
-        }
-
-        return parsed;
+        public UserAclData? Data { get; set; }
     }
 }
