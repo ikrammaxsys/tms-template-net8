@@ -1,4 +1,5 @@
 using tms_template_net8.AccessValidation;
+using tms_template_net8.Integrations;
 using tms_template_net8.Jwt;
 using tms_template_net8.Services;
 using TMS.WebApp.Sdk.DependencyInjection;
@@ -10,6 +11,7 @@ builder.Services.AddControllersWithViews();
 builder.Services.AddHttpClient();
 
 builder.Services.AddAuthAndAcl(builder.Configuration, builder.Environment);
+builder.Services.AddExternalIntegrations();
 builder.Services.AddAppServices();
 builder.Services.AddTmsWebAppSdk(builder.Configuration, opts =>
 {

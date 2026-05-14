@@ -1,4 +1,4 @@
-namespace tms_template_net8.Services;
+namespace tms_template_net8.Integrations;
 
 public interface ICoreAPIService
 {

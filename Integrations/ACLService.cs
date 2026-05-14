@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 
-namespace tms_template_net8.Services;
+namespace tms_template_net8.Integrations;
 
 public sealed class ACLService : IACLService
 {

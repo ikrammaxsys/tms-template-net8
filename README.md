@@ -17,12 +17,97 @@ This template gives a ready-to-use shell (sidebar, topbar, session handling, ACL
 - TMS UI Core Web Components (loaded from UI Foundation loader)
 - Package reference: `AuthACL.CentralAuth`
 
+## Project Structure
+
+```
+.
+├── Program.cs                              # Thin bootstrap; pipeline + DI extensions only
+├── appsettings.json
+├── appsettings.Development.json
+├── tms-template-net8.csproj
+├── tms-template-net8.sln
+│
+├── Jwt/                                    # JWT key + validator wiring
+│   ├── AuthServiceExtensions.cs              # services.AddAuthAndAcl(...)
+│   ├── JwtOptions.cs                         # bound from "Jwt" config section
+│   └── RsaKeyLoader.cs
+│
+├── Tokens/                                 # JWT validation primitives
+│   ├── ITokenService.cs
+│   ├── TokenService.cs
+│   └── AuthTokenValidationKind.cs
+│
+├── AccessValidation/                       # Per-request token gate + refresh
+│   ├── AccessTokenValidationMiddleware.cs
+│   ├── AccessTokenValidationExtensions.cs    # UseAccessTokenValidation(), UseRootAclRedirect()
+│   ├── AuthOptions.cs                        # bound from "Auth" config section
+│   ├── AuthTokenRefreshService.cs
+│   ├── IAuthTokenRefreshService.cs
+│   └── PublicPemSync.cs                      # downloads RSA public key on startup
+│
+├── AccessControl/                          # Per-page authorization (declarative)
+│   ├── RequirePageAccessAttribute.cs         # [RequirePageAccess("name", AccessRight.View)]
+│   └── PageAccessAuthorizationFilter.cs
+│
+├── Controllers/
+│   ├── Web/                                # MVC pages (return Razor views)
+│   │   ├── ACLCheckingController.cs          # ACL gate: callback, verify, logout
+│   │   ├── HomeController.cs
+│   │   └── ProductManagementController.cs
+│   └── Api/                                # JSON endpoints
+│       ├── IndexController.cs                # GET /index health
+│       └── ProductsController.cs
+│
+├── Services/                               # App-local business services
+│   ├── ServiceCollectionExtensions.cs        # services.AddAppServices() — register modules here
+│   ├── ProductService.cs                     # in-memory CRUD sample
+│   ├── UserAccessControlService.cs           # loads + caches UserAclData in session
+│   └── Interfaces/                           # app-local I*Service contracts
+│
+├── Integrations/                           # Services that call external systems
+│   ├── IntegrationServiceCollectionExtensions.cs  # services.AddExternalIntegrations()
+│   ├── ACLService.cs                         # VASP/ACL HTTP integration example
+│   ├── CoreAPIService.cs                     # Core API HTTP integration example
+│   ├── ReportService.cs                      # SDK SQL / Dapper integration example
+│   └── Interfaces/                           # integration contracts
+│
+├── Models/                                 # POCOs, request DTOs, view models
+│   ├── AccessRight.cs
+│   ├── AclTokenRequest.cs
+│   ├── ErrorViewModel.cs
+│   ├── UserAclData.cs
+│   ├── UserDetail.cs
+│   └── Product/
+│       └── ProductItem.cs
+│
+├── ViewModels/
+│   └── ConfirmationModalViewModel.cs
+│
+├── Views/                                  # MVC Razor views
+│   ├── Shared/                               # _Layout, _Sidebar, _Topbar, _ConfirmationModal
+│   ├── Home/
+│   ├── ACLChecking/
+│   └── ProductManagement/
+│
+├── wwwroot/                                # Static web assets
+│   ├── js/                                   # apiClient, apiRoutes, notifications, …
+│   ├── css/
+│   ├── data/                                 # sidebar-items.json, status-options.json
+│   ├── lib/                                  # third-party (bootstrap, jquery, …)
+│   └── ProductManagement/                    # per-module JS/CSS
+│       ├── js/
+│       └── css/
+│
+└── keys/                                   # RSA PEM (overwritten by PublicPemSync on startup)
+```
+
 ## What Is Inside
 
 - `Program.cs`
-  - Thin bootstrap. All DI is delegated to two extension methods:
+  - Thin bootstrap. All DI is delegated to small extension methods:
     `services.AddAuthAndAcl(...)` (auth + ACL gate + Vasp HttpClient)
-    and `services.AddAppServices()` (template/business services).
+    `services.AddExternalIntegrations()` (HTTP/SDK integrations)
+    and `services.AddAppServices()` (app-local services).
   - Registers TMS Core SDK via `services.AddTmsWebAppSdk(...)` and enables:
     - default SQL connection-name fallback to `ConnectionStrings:Default`
     - optional remote connection-string resolution (`UseRemoteAclConnectionProvider()`)
@@ -43,11 +128,14 @@ This template gives a ready-to-use shell (sidebar, topbar, session handling, ACL
   - Session population (`gstrUserID`, `gstrUserName`, `UserAclData`)
   - Logout and session cleanup flow
 - `Services/`
-  - `ServiceCollectionExtensions.AddAppServices()`: registers the services below
+  - `ServiceCollectionExtensions.AddAppServices()`: registers app-local services
+  - `ProductService`: in-memory sample CRUD service
+  - `UserAccessControlService`: session cache for current user's ACL snapshot
+- `Integrations/`
+  - `IntegrationServiceCollectionExtensions.AddExternalIntegrations()`: registers external-facing services
   - `ACLService`: VASP/ACL user lookup (template scaffolding example)
   - `CoreAPIService`: sample call to TMS Core API (`/api/v1/status`)
   - `ReportService`: sample SQL access via SDK `ISqlExecutor`
-  - `ProductService`: in-memory sample CRUD service
 - `Controllers/Web` and `Controllers/Api`
   - MVC pages + API endpoints
   - Example product CRUD API in `api/products`
@@ -191,8 +279,9 @@ These are loaded via the UI Foundation loader script in `Views/Shared/_Layout.cs
 For additional TMS common modules, follow the same pattern:
 
 1. Add package reference in `.csproj`
-2. Register required services in `Services/ServiceCollectionExtensions.cs` (`AddAppServices`)
-3. Wrap usage behind project-local service interfaces in `Services/Interfaces`
+2. For external HTTP/SDK/data clients, place the implementation in `Integrations/`
+3. Register integrations in `Integrations/IntegrationServiceCollectionExtensions.cs` (`AddExternalIntegrations`)
+4. Keep app-local business services in `Services/` and register them through `AddAppServices`
 
 #### SQL data access with `ISqlExecutor`
 
@@ -205,11 +294,11 @@ For additional TMS common modules, follow the same pattern:
   - when remote resolver is enabled, the name is resolved via `TmsSdk:ConnectionString:RemoteResolverUrl`
   - otherwise it resolves from `ConnectionStrings:<name>`
 
-See `Services/ReportService.cs` and `Services/Interfaces/IReportService.cs` for concrete examples.
+See `Integrations/ReportService.cs` and `Integrations/Interfaces/IReportService.cs` for concrete examples.
 
 ### TMS Core API
 
-`CoreAPIService` is the template entry point for Core API integration.  
+`CoreAPIService` in `Integrations/` is the template entry point for Core API integration.  
 Configure `CoreApi:BaseUrl` and add new methods following `GetStatusAsync`.
 
 ### ACL V2 (Authorization)

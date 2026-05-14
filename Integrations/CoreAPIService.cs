@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace tms_template_net8.Services;
+namespace tms_template_net8.Integrations;
 
 public sealed class CoreAPIService : ICoreAPIService
 {
@@ -26,7 +26,7 @@ public sealed class CoreAPIService : ICoreAPIService
 
         using var request = new HttpRequestMessage(HttpMethod.Get, statusUri);
         request.Headers.Accept.ParseAdd(JsonMediaType);
-        
+
         using var client = _httpClientFactory.CreateClient();
         using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
