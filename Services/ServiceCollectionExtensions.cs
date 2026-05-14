@@ -10,6 +10,7 @@ public static class ServiceCollectionExtensions
     {
         services.AddScoped<IACLService, ACLService>();
         services.AddScoped<ICoreAPIService, CoreAPIService>();
+        services.AddScoped<IReportService, ReportService>();
         services.AddSingleton<IProductService, ProductService>();
         return services;
     }

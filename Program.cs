@@ -13,8 +13,25 @@ builder.Services.AddAuthAndAcl(builder.Configuration, builder.Environment);
 builder.Services.AddAppServices();
 builder.Services.AddTmsWebAppSdk(builder.Configuration, opts =>
 {
-    // Optional: override options after binding from configuration
+    // Keep local development simple: fall back to ConnectionStrings:Default
+    // when no explicit logical connection name is configured.
+    if (string.IsNullOrWhiteSpace(opts.ConnectionString.DefaultName))
+    {
+        opts.ConnectionString.DefaultName = "Default";
+    }
 });
+
+// Optional: resolve DB connection strings via the remote ACL endpoint when configured.
+// if (!string.IsNullOrWhiteSpace(builder.Configuration["TmsSdk:ConnectionString:RemoteResolverUrl"]))
+// {
+//     builder.Services.UseRemoteAclConnectionProvider();
+// }
+
+// Optional: log SDK errors through the configured SQL stored procedure.
+if (!string.IsNullOrWhiteSpace(builder.Configuration["TmsSdk:ErrorLog:StoredProcedureName"]))
+{
+    builder.Services.UseSqlErrorLogger();
+}
 
 builder.Services.AddDistributedMemoryCache();
 builder.Services.AddSession(options =>

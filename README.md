@@ -23,6 +23,10 @@ This template gives a ready-to-use shell (sidebar, topbar, session handling, ACL
   - Thin bootstrap. All DI is delegated to two extension methods:
     `services.AddAuthAndAcl(...)` (auth + ACL gate + Vasp HttpClient)
     and `services.AddAppServices()` (template/business services).
+  - Registers TMS Core SDK via `services.AddTmsWebAppSdk(...)` and enables:
+    - default SQL connection-name fallback to `ConnectionStrings:Default`
+    - optional remote connection-string resolution (`UseRemoteAclConnectionProvider()`)
+    - optional SQL stored-procedure error logging (`UseSqlErrorLogger()`)
   - Pipeline composes the ACL bootstrap redirect (`/` → `/ACLChecking`)
     and the access-token validation middleware.
 - `Jwt/`, `Tokens/`, `AccessControl/`, `AccessValidation/`
@@ -42,6 +46,7 @@ This template gives a ready-to-use shell (sidebar, topbar, session handling, ACL
   - `ServiceCollectionExtensions.AddAppServices()`: registers the services below
   - `ACLService`: VASP/ACL user lookup (template scaffolding example)
   - `CoreAPIService`: sample call to TMS Core API (`/api/v1/status`)
+  - `ReportService`: sample SQL access via SDK `ISqlExecutor`
   - `ProductService`: in-memory sample CRUD service
 - `Controllers/Web` and `Controllers/Api`
   - MVC pages + API endpoints
@@ -91,6 +96,13 @@ parentheses; defaults are baked into the option classes so missing keys are fine
   - `BaseUrl` (TMS UI web component loader base URL)
 - `CoreApi`
   - `BaseUrl` (TMS Core API base URL)
+- `ConnectionStrings`
+  - `Default` (fallback SQL Server connection string used when no logical connection name is provided)
+- `TmsSdk`
+  - `ConnectionString:DefaultName` (logical DB connection name for `ISqlExecutor`)
+  - `ConnectionString:RemoteResolverUrl` (optional; enables remote connection-string provider)
+  - `ErrorLog:StoredProcedureName` (optional; enables SQL stored-procedure error logger)
+  - `ErrorLog:ConnectionName` (optional; connection-name override for error logging)
 
 Optional/used by views and middleware:
 
@@ -181,6 +193,19 @@ For additional TMS common modules, follow the same pattern:
 1. Add package reference in `.csproj`
 2. Register required services in `Services/ServiceCollectionExtensions.cs` (`AddAppServices`)
 3. Wrap usage behind project-local service interfaces in `Services/Interfaces`
+
+#### SQL data access with `ISqlExecutor`
+
+`ISqlExecutor`, `ISettingService`, and `IDropdownService` are registered by `AddTmsWebAppSdk(...)`.
+
+- For stored procedures, pass `IEnumerable<SqlParameter>` and `CommandType.StoredProcedure`
+- For Dapper-style queries, use `QueryAsync<T>` / `QuerySingleAsync<T>` with an anonymous object or POCO parameter object
+- `connectionName` is optional:
+  - when omitted, SDK uses `TmsSdk:ConnectionString:DefaultName`
+  - when remote resolver is enabled, the name is resolved via `TmsSdk:ConnectionString:RemoteResolverUrl`
+  - otherwise it resolves from `ConnectionStrings:<name>`
+
+See `Services/ReportService.cs` and `Services/Interfaces/IReportService.cs` for concrete examples.
 
 ### TMS Core API
 
